@@ -21,7 +21,7 @@ source-repository head
 
 library
   exposed-modules:
-      Lib
+      Data.Template
   other-modules:
       Paths_string_templates
   autogen-modules:
@@ -29,8 +29,16 @@ library
   hs-source-dirs:
       src
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+  default-extensions: 
+    ImportQualifiedPost
+    OverloadedStrings
+    InstanceSigs
   build-depends:
-      base >=4.7 && <5
+       base >=4.7 && <5
+      ,text
+      ,sized
+      ,vector
+      ,type-natural
   default-language: Haskell2010
 
 test-suite string-templates-test

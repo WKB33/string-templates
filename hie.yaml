@@ -1,0 +1,7 @@
+cradle:
+  stack:
+    - path: "./src"
+      component: "string-templates:lib"
+
+    - path: "./test"
+      component: "string-templates:test:string-templates-test"
