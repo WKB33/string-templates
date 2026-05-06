@@ -39,6 +39,8 @@ library
       ,sized
       ,vector
       ,type-natural
+      ,mtl
+      ,equational-reasoning
   default-language: Haskell2010
 
 test-suite string-templates-test
