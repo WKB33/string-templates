@@ -22,6 +22,7 @@ source-repository head
 library
   exposed-modules:
       Data.Template
+      Data.QQ
   other-modules:
       Paths_string_templates
   autogen-modules:

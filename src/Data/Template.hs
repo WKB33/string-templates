@@ -1,10 +1,3 @@
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE TypeOperators       #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE TypeFamilies        #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE RankNTypes          #-}
 {-|
 Module      : Template
 Description : Framework for creating string templates
@@ -17,74 +10,89 @@ can be plugged. No parsing of the actual string is done, but the string is
 broken up into `chunk`'s in between the `hole`'s. Then a plug function can 
 be defined to replace the holes with strings; see `plug`.
 -}
-module Data.Template (Template  
-                     -- * Combinators                    
-                     ,hole
-                     ,chunk
-                     ,(<+>)
-                     -- * Plugging and Unpacking
-                     ,plug
-                     ,unpack) where
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE TypeOperators       #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE TypeFamilies        #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes          #-}
+module Data.Template (-- * Templates
+                       Template
+                       -- * Combinators   
+                      ,hole                 
+                      ,chunk
+                      ,(+>)
+                       -- * Plugging and Unpacking
+                      ,plug
+                      ) where
 
-import GHC.TypeNats (type (+)
-                    ,Natural)
-import GHC.TypeLits (Nat)
+import GHC.TypeNats      (type (+)
+                         ,Natural
+                         ,Nat)
+import Data.Type.Natural (S)
+import Data.Text         qualified as DT
 
-import Data.Text qualified as DT
+-- | A internal template with `n` holes. 
+data ITemplate (n :: Nat) where
+  Chunk   :: DT.Text      -> ITemplate 0                         -- ^ Chunk of a string.
+  Hole    :: Natural      -> ITemplate (S n)                     -- ^ A hole. 
+  Compose :: ITemplate n1 -> ITemplate n2 -> ITemplate (n1 + n2) -- ^ Composition of templates.
 
--- | A template with `n` holes. We do not expose the underlying constructors in
--- favor of using the template combinators.
-data Template (n :: Nat) where
-  Hole    :: Natural -> Template 1                                 -- ^ Hole with a label.
-  Chunk   :: DT.Text -> Template 0                                 -- ^ Chunk of a string.
-  Compose :: (Template n1) -> (Template n2) -> Template (n1 + n2)  -- ^ Composition of templates.
-
-instance Show (Template n) where
-    show :: Template n -> String
-    show (Hole i)        = "${" <> (show i) <> "}"
+instance Show (ITemplate n) where
+    show :: ITemplate n -> String    
     show (Chunk t)       = DT.unpack t
-    show (Compose t1 t2) = show t1 <> show t2
+    show (Hole h)        = "${" <> show h <> "}"
+    show (Compose t1 t2) = (show t1) <> (show t2)
+
+-- | A template with pluggable holes. We do not expose the underlying
+-- constructors in favor of the combinators.
+data Template where
+    Template :: ITemplate m -> Template
+
+instance Show Template where
+    show :: Template -> String
+    show (Template t) = show t
 
 -- | Composition of templates.
-(<+>) :: Template n1
-      -> Template n2
-      -> Template (n1 + n2)
-t1 <+> t2 = Compose t1 t2
+(+>) :: Template
+     -> Template
+     -> Template
+(Template t1) +> (Template t2) = Template $ Compose t1 t2
 
--- | A hole is a placeholder for a future string. Holes are indexed by natural
--- numbers.
-hole :: Natural -- ^ Hole index.
-     -> Template 1
-hole i = Hole i
+-- | A hole.
+hole :: Natural
+     -> Template
+hole = Template . Hole
 
 -- | A chunk is a substring to a larger string.
 chunk :: DT.Text -- ^ Substring.
-      -> Template 0
-chunk = Chunk
+      -> Template
+chunk = Template . Chunk
 
 -- | Plugs every hole in a template using the given plug function. If the plug
 -- function is defined for every hole in the input template, then this function
 -- guarantees a template with no holes (a string) is returned.
-plug 
+plug :: (Natural -> Maybe DT.Text)
+     -> Template
+     -> Maybe DT.Text
+plug f (Template t) = 
+    case _plug f t of
+        Nothing -> Nothing
+        Just (Chunk c) -> Just c
+        _ -> error "impossible branch"
+
+-- | Main logic for plug.
+_plug 
     :: (Natural -> Maybe DT.Text) -- ^ Plug function.
-    -> Template n                 -- ^ Template to plug.
-    -> Maybe (Template 0)
-plug f (Hole i) = do
+    -> ITemplate n                -- ^ ITemplate to plug.
+    -> Maybe (ITemplate 0)
+_plug f (Hole i) = do
     c <- f i 
     return $ Chunk c
-plug f (Compose t1 t2) = do
-    t1' <- plug f t1
-    t2' <- plug f t2
+_plug f (Compose t1 t2) = do
+    t1' <- _plug f t1
+    t2' <- _plug f t2
     return $ Compose t1' t2'
-plug _ (Chunk t) = return $ Chunk t
+_plug _ (Chunk t) = return $ Chunk t
 
--- | Unpacks a template with no holes into a string.
-unpack 
-    :: Template 0 -- ^ Template to unpack.
-    -> DT.Text
-unpack = _unpack
-    where
-        _unpack :: Template n -> DT.Text
-        _unpack (Chunk s)       = s        
-        _unpack (Compose t1 t2) = _unpack t1 <> _unpack t2
-        _unpack (Hole _)        = error "reached unreachable branch"
