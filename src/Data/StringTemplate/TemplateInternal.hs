@@ -84,7 +84,7 @@ plug f (Template t) =
     case _plug f t of
         Nothing -> Nothing
         Just (Chunk c) -> Just c
-        _ -> error "impossible branch"
+        Just _ -> error $ "impossible branch"
 
 -- | Main logic for plug.
 _plug 
@@ -95,7 +95,7 @@ _plug f (Hole i) = do
     c <- f i 
     return $ Chunk c
 _plug f (Compose t1 t2) = do
-    t1' <- _plug f t1
-    t2' <- _plug f t2
-    return $ Compose t1' t2'
+    Chunk t1' <- _plug f t1
+    Chunk t2' <- _plug f t2
+    return $ Chunk $ t1' <> t2'
 _plug _ (Chunk t) = return $ Chunk t
