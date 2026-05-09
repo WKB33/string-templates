@@ -44,7 +44,7 @@ parseTemplate ('\\' DT.:< r) = do
             return $ (chunk chk) +> t
 -- Parse chunk
 parseTemplate (x DT.:< r) = do
-    let (chk,r') = DT.span (\c -> not $ c `elem` ['$','\\']) r
+    let (chk,r') = DT.span (`notElem` ['$','\\']) r
     if DT.null r'
     then return $ chunk (x DT.:< chk)
     else do 

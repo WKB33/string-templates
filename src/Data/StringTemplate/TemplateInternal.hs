@@ -77,14 +77,14 @@ showAST (Template (Compose t1 t2)) = "Compose ("
 -- | Plugs every hole in a template using the given plug function. If the plug
 -- function is defined for every hole in the input template, then this function
 -- guarantees a template with no holes (a string) is returned.
-plug :: (Natural -> Maybe DT.Text)
-     -> Template
+plug :: Template                     -- ^ Template to plug
+     -> (Natural -> Maybe DT.Text)   -- ^ Plug function
      -> Maybe DT.Text
-plug f (Template t) = 
+plug (Template t) f = 
     case _plug f t of
         Nothing -> Nothing
         Just (Chunk c) -> Just c
-        Just _ -> error $ "impossible branch"
+        Just _ -> error "impossible branch"
 
 -- | Main logic for plug.
 _plug 
