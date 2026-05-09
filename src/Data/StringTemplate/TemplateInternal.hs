@@ -10,28 +10,20 @@ can be plugged. No parsing of the actual string is done, but the string is
 broken up into `chunk`'s in between the `hole`'s. Then a plug function can 
 be defined to replace the holes with strings; see `plug`.
 -}
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE TypeOperators       #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE TypeFamilies        #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE RankNTypes          #-}
-module Data.Template (-- * Templates
-                       Template
-                       -- * Combinators   
-                      ,hole                 
-                      ,chunk
-                      ,(+>)
-                       -- * Plugging and Unpacking
-                      ,plug
-                      ) where
+{-# LANGUAGE DataKinds                    #-}
+{-# LANGUAGE TypeOperators                #-}
+{-# LANGUAGE AllowAmbiguousTypes          #-}
+{-# LANGUAGE TypeFamilies                 #-}
+{-# LANGUAGE ScopedTypeVariables          #-}
+{-# LANGUAGE RankNTypes                   #-}
+{-# OPTIONS_GHC -Wno-missing-export-lists #-}
+module Data.StringTemplate.TemplateInternal where
 
-import GHC.TypeNats      (type (+)
-                         ,Natural
-                         ,Nat)
-import Data.Type.Natural (S)
-import Data.Text         qualified as DT
+import GHC.TypeNats            (type (+)
+                               ,Natural
+                               ,Nat)
+import Data.Type.Natural       (S)
+import Data.Text               qualified as DT
 
 -- | A internal template with `n` holes. 
 data ITemplate (n :: Nat) where
@@ -70,6 +62,18 @@ chunk :: DT.Text -- ^ Substring.
       -> Template
 chunk = Template . Chunk
 
+-- | Convert a template into a `Text`, but in AST form rather than pretty
+-- printing. The `Show` instance for `Template` is set to pretty print, but for
+-- debugging it is sometimes useful to see the raw AST.
+showAST :: Template -> DT.Text
+showAST (Template (Chunk chk))     = "Chunk " <> DT.show chk
+showAST (Template (Hole h))        = "Hole "  <> (DT.show h)
+showAST (Template (Compose t1 t2)) = "Compose (" 
+                                  <> showAST (Template t1) 
+                                  <> ") ("
+                                  <> showAST (Template t2)
+                                  <> ")"
+
 -- | Plugs every hole in a template using the given plug function. If the plug
 -- function is defined for every hole in the input template, then this function
 -- guarantees a template with no holes (a string) is returned.
@@ -95,4 +99,3 @@ _plug f (Compose t1 t2) = do
     t2' <- _plug f t2
     return $ Compose t1' t2'
 _plug _ (Chunk t) = return $ Chunk t
-

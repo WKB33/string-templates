@@ -21,8 +21,9 @@ source-repository head
 
 library
   exposed-modules:
-      Data.Template
-      Data.QQ
+      Data.StringTemplate
+      Data.StringTemplate.TemplateInternal
+      Data.StringTemplate.QQInternal
   other-modules:
       Paths_string_templates
   autogen-modules:
@@ -34,14 +35,14 @@ library
     ImportQualifiedPost
     OverloadedStrings
     InstanceSigs
+    LambdaCase
+    ViewPatterns
+    GADTs
   build-depends:
        base >=4.7 && <5
       ,text
-      ,sized
-      ,vector
       ,type-natural
-      ,mtl
-      ,equational-reasoning
+      ,template-haskell    
   default-language: Haskell2010
 
 test-suite string-templates-test
@@ -49,12 +50,27 @@ test-suite string-templates-test
   main-is: Spec.hs
   other-modules:
       Paths_string_templates
+      Data.StringTemplate.QQInternalSpec            
   autogen-modules:
       Paths_string_templates
   hs-source-dirs:
       test
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
+  default-extensions: 
+    ImportQualifiedPost
+    OverloadedStrings
+    InstanceSigs
+    LambdaCase
+    ViewPatterns
+    GADTs
   build-depends:
-      base >=4.7 && <5
-    , string-templates
+     base >=4.7 && <5
+    ,string-templates
+    ,text
+    ,type-natural
+    ,template-haskell    
+    ,hspec
+    ,hspec-contrib
+    ,QuickCheck
+    ,HUnit
   default-language: Haskell2010
