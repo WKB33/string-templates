@@ -19,18 +19,17 @@ be defined to replace the holes with strings; see `plug`.
 {-# OPTIONS_GHC -Wno-missing-export-lists #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TypeAbstractions #-}
 module Data.StringTemplate.TemplateInternal where
 
 import GHC.TypeNats            (type (+)
                                ,Natural
-                               ,Nat, sameNat, SomeNat (SomeNat), KnownNat (natSing))
-import Data.Type.Natural       (S, type (>))
+                               ,Nat)
+import Data.Type.Natural       (type (>))
 import Data.Text               qualified as DT
-import GHC.Base (WithDict(..), coerce)
-import Data.Constraint.Nat (plusAssociates)
-import Data.Constraint (HasDict(evidence), (:-), Dict (..), (\\))
-import Data.Type.Equality ((:~:) (..))
-import Data.Type.Coercion (coerceWith)
+import Data.Constraint (Dict (..), (\\))
+import Data.Constraint.Nat (plusAssociates, plusZero)
+import Data.Constraint.Unsafe (unsafeAxiom)
 
 -- | A internal template with `n` holes. 
 data ITemplate (n :: Nat) where
@@ -53,39 +52,88 @@ instance Show Template where
     show :: Template -> String
     show (Template t) = show t
 
-p1 :: forall n5 n6 n7.Dict (((n5 + n6) + n7) ~ (n5 + (n6 + n7))) -> forall n4.Dict ((n4 + ((n5 + n6) + n7)) ~ (n4 + (n5 + (n6 + n7))))
-p1 Dict = Dict
+p1 :: forall n1 n2.Dict ((1 + (n1 + n2)) ~ ((1 + n1) + n2))
+p1 = Dict \\ plusAssociates @1 @n1 @n2 
 
-ev :: forall n4 n5 n6 n7.Dict (((n4 + (n5 + n6)) + n7) ~ ((n4 + n5) + (n6 + n7)))
-ev =  Dict \\ (plusAssociates @n4 @n5 @(n6 + n7)) \\ (p1 @n5 @n6 @n7 (plusAssociates @n5 @n6 @n7) @n4) \\ plusAssociates @n4 @(n5 + n6) @n7 
+p2 :: forall n1 n2.Dict ((1 + n1) + n2 > 0)
+p2 = Dict \\ plusAssociates @1 @n1 @n2 \\ p11 @1 @(n1+n2)
 
-p3 :: forall n1 n4 n5 n2 n6 n7.(n1 ~ (n4 + n5), n2 ~ (n6 + n7)) => Dict (((n4 + (n5 + n6)) + n7) ~ (n1 + n2))
-p3 = Dict \\ ev @n4 @n5 @n6 @n7
+-- TODO: Figure out how to prove this.
+p11 :: forall n1 n2.(n1 > 0) => Dict ((n1 + n2) > 0)
+p11 = unsafeAxiom
 
-p :: forall n1 n4 n5 n2 n6 n7.(n1 ~ (n4 + n5), n2 ~ (n6 + n7))
-  => ITemplate n4
-  -> ITemplate n5
-  -> ITemplate n6
-  -> ITemplate n7
-  -> ITemplate (n1+n2)
-p t1 t2 t3 t4 = (t1 >+> (t2 >+> t3) >+> t4) \\ p3 @n1 @n4 @n5 @n2 @n6 @n7
+-- TODO: Figure out how to prove this.
+p12 :: forall n1 n2.(n2 > 0) => Dict ((n1 + n2) > 0)
+p12 = unsafeAxiom
 
-(>+>) :: ITemplate n1 -> ITemplate n2 -> ITemplate (n1 + n2)
-t1@(Hole _)     >+> t2@(Hole _)     = Compose t1 t2
-t1@(Hole _)     >+> t2@(Chunk _)    = Compose t1 t2
-t1@(Chunk _)    >+> t2@(Hole _)     = Compose t1 t2
-(Chunk chk1)    >+> (Chunk chk2)    = Chunk $ chk1 <> chk2
-(Compose t1 t2) >+> t3@(Chunk _)    = undefined
-t1@(Chunk _)    >+> (Compose t2 t3) = (>+> t3) $! (t1 >+> t2)
-t1@(Hole _)     >+> (Compose t2 t3) = undefined --Compose t1 $ t2 >+> t3
-(Compose t1 t2) >+> t3@(Hole _)     = undefined --Compose (t1 >+> t2) t3
-(Compose t1 t2) >+> (Compose t3 t4) = p t1 t2 t3 t4
+p10 :: Dict (1 > 0)
+p10 = Dict
+
+p3 :: forall m n1 n2.Dict ((m + (n1 + n2)) ~ ((m + n1) + n2))
+p3 = Dict \\ plusAssociates @m @n1 @n2
+
+p4 :: forall m n1 n2.n1 + n2 > 0 => Dict(m + (n1 + n2) > 0)
+p4 = Dict \\ p12 @m @(n1 + n2)
+
+p5 :: forall m n4 n5 n2 n1.n1 ~ (n4 + n5) => Dict (((m + n4) + (n5 + n2)) ~ ((m + n1) + n2))
+p5 = Dict \\ plusAssociates @m @n4 @(n5 + n2) \\ plusAssociates @n4 @n5 @n2 \\ plusAssociates @m @n1 @n2
+
+p13 :: forall n4 n5 n2.Dict (n4 + (n5 + n2) ~ (n4 + n5) + n2)
+p13 = Dict \\ plusAssociates @n4 @n5 @n2
+
+p6 :: forall n4 n5 n2.n4 + n5 > 0 => Dict (n4 + (n5 + n2) > 0)
+p6 = Dict \\ p13 @n4 @n5 @n2 \\ p11 @(n4 + n5) @n2
+
+p7 :: forall m n1 n2.(n1 + n2) > 0 => Dict ((m + n1) + n2 > 0)
+p7 = Dict \\ plusAssociates @m @n1 @n2 \\ p12 @m @(n1 + n2)
+
+--((m + n1) + n2) ~ (m + n)
+p8 :: forall m n1 n4 n5.n1 ~ n4 + n5 => Dict (((m + n4) + n5) ~ (m + n1))
+p8 = Dict \\ plusAssociates @m @n4 @n5 
+
+p9 :: forall m n1 n2 n4 n5.(m ~ (n1 + n2), n2 ~ (n4 + n5)) => Dict (((n1 + n4) + n5) ~ m)
+p9 = Dict \\ plusAssociates @n1 @n4 @n5
+
+-- Minimal Template (t):
+--   i. t is Hole _
+--  ii. t is Chunk _ 
+--  ii. flatten t = [t' | t' is Template i, i in [0,1]] where the longest run of
+--  Template 1's is 1. That is, Template 1 never follows itself.
+--
+--
+-- Recomposition
+-- idea: recomp t1 (Compose t2 t3,t4) ~> recomp t1 (t2,Compose t3 t4)
+--       recomp (Compose t1 t2) (t3,t4) ~> recomp t1 (Compose t2 t3,t4) ~> recomp t1 (t2,Compose t3 t4)
+-- 
+recomp :: forall m n1 n2.(n1 + n2 > 0) 
+       => ITemplate m 
+       -> (ITemplate n1,ITemplate n2) 
+       -> ITemplate (m + n1 + n2)
+recomp t1@(Hole _) (t2,t3)              = (Compose t1 $ t2 >+> t3) \\ p1 @n1 @n2 \\ p2 @n1 @n2
+recomp (Chunk chk1) ((Chunk chk2),t3)   = (Chunk $ chk1 <> chk2) >+> t3
+recomp t1@(Chunk _) (t2@(Hole _),t3)    = Compose t1 $ t2 >+> t3
+recomp (Compose @n4 @n5 t1 t2) (t3,t4)  = (recomp @n4 @n5 t1 (t2,Compose t3 t4)) \\ p3 @m @n1 @n2 \\ p4 @n5 @n1 @n2
+recomp t1 (Compose @n4 @n5 t2 t3,t4)    = (recomp t1 (t2,t3)) >+> t4 \\ p7 @m @n1 @n2 \\ p8 @m @n1 @n4 @n5
+
+(>+>) :: forall m n.(m+n > 0)
+      => ITemplate m 
+      -> ITemplate n 
+      -> ITemplate (m+n)
+t1                                          >+> (Compose @n1 @n2 t2 t3) = recomp t1 (t2,t3) \\ p8 @m @n @n1 @n2
+(Compose t1 (Chunk chk1))                   >+> (Chunk chk2)            = t1 >+> (Chunk $ chk1 <> chk2)
+(Compose t1 t2@(Chunk _))                   >+> t3@(Hole _)             = recomp t1 (t2,t3)
+(Compose t1 t2@(Hole _))                    >+> t3@(Chunk _)            = recomp t1 (t2,t3)
+(Compose @n1 t1 (Compose @n4 @n5 t2 t3))    >+> t4                      = recomp t1 (t2,t3) >+> t4 \\ p9 @m @n1 @_ @n4 @n5
+t1                                          >+> t2                      = Compose t1 t2
 
 -- | Composition of templates.
+-- Use an intermediate list to capture the composition, but when we have a
+-- chunck + hole, then pull it out into a Compose to build the Template as we
+-- go.
 (+>) :: Template
      -> Template
      -> Template
-(Template t1) +> (Template t2) = Template $ t1 >+> t2
+(Template t1) +> (Template t2) = Template $ undefined --t1 >+> t2
 
 -- | A hole.
 hole :: Natural
