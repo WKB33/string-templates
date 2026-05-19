@@ -25,23 +25,22 @@ module Data.StringTemplate.TemplateInternal where
 import GHC.TypeNats            (type (+)
                                ,Natural
                                ,Nat)
-import Data.Type.Natural       (type (>))
+import Data.Type.Natural       (S)
 import Data.Text               qualified as DT
-import Data.Constraint (Dict (..), (\\))
-import Data.Constraint.Nat (plusAssociates, plusZero)
-import Data.Constraint.Unsafe (unsafeAxiom)
+import Data.Constraint         (Dict (..)
+                               ,(\\))
+import Data.Constraint.Nat     (plusAssociates
+                               ,plusCommutes)
 
 -- | A internal template with `n` holes. 
 data ITemplate (n :: Nat) where
-  Chunk   :: DT.Text      -> ITemplate 0                         -- ^ Chunk of a string.
-  Hole    :: Natural      -> ITemplate 1                         -- ^ A hole. 
-  Compose :: ((n1 + n2) > 0) => ITemplate n1 -> ITemplate n2 -> ITemplate (n1 + n2) -- ^ Composition of templates.
+    Chunk   :: DT.Text -> ITemplate 0
+    Compose :: DT.Text -> Natural -> ITemplate n -> ITemplate (S n)
 
 instance Show (ITemplate n) where
     show :: ITemplate n -> String    
     show (Chunk t)       = DT.unpack t
-    show (Hole h)        = "${" <> show h <> "}"
-    show (Compose t1 t2) = (show t1) <> (show t2)
+    show (Compose prefix h rest) = DT.unpack prefix <> "${" <> show h <> "}" <> show rest
 
 -- | A template with pluggable holes. We do not expose the underlying
 -- constructors in favor of the combinators.
@@ -52,93 +51,44 @@ instance Show Template where
     show :: Template -> String
     show (Template t) = show t
 
-p1 :: forall n1 n2.Dict ((1 + (n1 + n2)) ~ ((1 + n1) + n2))
-p1 = Dict \\ plusAssociates @1 @n1 @n2 
+-- | Equality of ITemplates.
+(>==>) :: forall m n.
+          ITemplate m
+       -> ITemplate n
+       -> Bool
+(Chunk chk1)        >==> (Chunk chk2)        = chk1 == chk2
+(Compose chk1 _ r1) >==> (Compose chk2 _ r2) = (chk1 == chk2 && r1 >==> r2) 
+_                   >==> _                   = False
 
-p2 :: forall n1 n2.Dict ((1 + n1) + n2 > 0)
-p2 = Dict \\ plusAssociates @1 @n1 @n2 \\ p11 @1 @(n1+n2)
+-- | Equality of templates. Two templates are considered equivalent if and only
+-- if they differ by hole labels only.
+(==>) :: Template
+      -> Template
+      -> Bool
+(Template t1) ==> (Template t2) = t1 >==> t2
 
--- TODO: Figure out how to prove this.
-p11 :: forall n1 n2.(n1 > 0) => Dict ((n1 + n2) > 0)
-p11 = unsafeAxiom
-
--- TODO: Figure out how to prove this.
-p12 :: forall n1 n2.(n2 > 0) => Dict ((n1 + n2) > 0)
-p12 = unsafeAxiom
-
-p10 :: Dict (1 > 0)
-p10 = Dict
-
-p3 :: forall m n1 n2.Dict ((m + (n1 + n2)) ~ ((m + n1) + n2))
-p3 = Dict \\ plusAssociates @m @n1 @n2
-
-p4 :: forall m n1 n2.n1 + n2 > 0 => Dict(m + (n1 + n2) > 0)
-p4 = Dict \\ p12 @m @(n1 + n2)
-
-p5 :: forall m n4 n5 n2 n1.n1 ~ (n4 + n5) => Dict (((m + n4) + (n5 + n2)) ~ ((m + n1) + n2))
-p5 = Dict \\ plusAssociates @m @n4 @(n5 + n2) \\ plusAssociates @n4 @n5 @n2 \\ plusAssociates @m @n1 @n2
-
-p13 :: forall n4 n5 n2.Dict (n4 + (n5 + n2) ~ (n4 + n5) + n2)
-p13 = Dict \\ plusAssociates @n4 @n5 @n2
-
-p6 :: forall n4 n5 n2.n4 + n5 > 0 => Dict (n4 + (n5 + n2) > 0)
-p6 = Dict \\ p13 @n4 @n5 @n2 \\ p11 @(n4 + n5) @n2
-
-p7 :: forall m n1 n2.(n1 + n2) > 0 => Dict ((m + n1) + n2 > 0)
-p7 = Dict \\ plusAssociates @m @n1 @n2 \\ p12 @m @(n1 + n2)
-
---((m + n1) + n2) ~ (m + n)
-p8 :: forall m n1 n4 n5.n1 ~ n4 + n5 => Dict (((m + n4) + n5) ~ (m + n1))
-p8 = Dict \\ plusAssociates @m @n4 @n5 
-
-p9 :: forall m n1 n2 n4 n5.(m ~ (n1 + n2), n2 ~ (n4 + n5)) => Dict (((n1 + n4) + n5) ~ m)
-p9 = Dict \\ plusAssociates @n1 @n4 @n5
-
--- Minimal Template (t):
---   i. t is Hole _
---  ii. t is Chunk _ 
---  ii. flatten t = [t' | t' is Template i, i in [0,1]] where the longest run of
---  Template 1's is 1. That is, Template 1 never follows itself.
---
---
--- Recomposition
--- idea: recomp t1 (Compose t2 t3,t4) ~> recomp t1 (t2,Compose t3 t4)
---       recomp (Compose t1 t2) (t3,t4) ~> recomp t1 (Compose t2 t3,t4) ~> recomp t1 (t2,Compose t3 t4)
--- 
-recomp :: forall m n1 n2.(n1 + n2 > 0) 
-       => ITemplate m 
-       -> (ITemplate n1,ITemplate n2) 
-       -> ITemplate (m + n1 + n2)
-recomp t1@(Hole _) (t2,t3)              = (Compose t1 $ t2 >+> t3) \\ p1 @n1 @n2 \\ p2 @n1 @n2
-recomp (Chunk chk1) ((Chunk chk2),t3)   = (Chunk $ chk1 <> chk2) >+> t3
-recomp t1@(Chunk _) (t2@(Hole _),t3)    = Compose t1 $ t2 >+> t3
-recomp (Compose @n4 @n5 t1 t2) (t3,t4)  = (recomp @n4 @n5 t1 (t2,Compose t3 t4)) \\ p3 @m @n1 @n2 \\ p4 @n5 @n1 @n2
-recomp t1 (Compose @n4 @n5 t2 t3,t4)    = (recomp t1 (t2,t3)) >+> t4 \\ p7 @m @n1 @n2 \\ p8 @m @n1 @n4 @n5
-
-(>+>) :: forall m n.(m+n > 0)
-      => ITemplate m 
+-- | Composition of ITemplates.
+(>+>) :: forall m n.
+         ITemplate m 
       -> ITemplate n 
       -> ITemplate (m+n)
-t1                                          >+> (Compose @n1 @n2 t2 t3) = recomp t1 (t2,t3) \\ p8 @m @n @n1 @n2
-(Compose t1 (Chunk chk1))                   >+> (Chunk chk2)            = t1 >+> (Chunk $ chk1 <> chk2)
-(Compose t1 t2@(Chunk _))                   >+> t3@(Hole _)             = recomp t1 (t2,t3)
-(Compose t1 t2@(Hole _))                    >+> t3@(Chunk _)            = recomp t1 (t2,t3)
-(Compose @n1 t1 (Compose @n4 @n5 t2 t3))    >+> t4                      = recomp t1 (t2,t3) >+> t4 \\ p9 @m @n1 @_ @n4 @n5
-t1                                          >+> t2                      = Compose t1 t2
+(Chunk chk1)        >+> (Chunk chk2)    = Chunk $ chk1 <> chk2
+(Chunk chk)         >+> (Compose p h r) = Compose (chk <> p) h r
+(Compose @n1 p h r) >+> t               = (Compose p h $ r >+> t) \\ p1 @m @n1 @n
+    where
+        p1 :: forall m n1 n . m ~ (n1 + 1) => Dict (((n1 + n) + 1) ~ (m + n))
+        p1 = Dict \\ plusCommutes @n1 @n \\ plusAssociates @n @n1 @1 \\ plusCommutes @n @m
 
 -- | Composition of templates.
--- Use an intermediate list to capture the composition, but when we have a
--- chunck + hole, then pull it out into a Compose to build the Template as we
--- go.
 (+>) :: Template
      -> Template
      -> Template
-(Template t1) +> (Template t2) = Template $ undefined --t1 >+> t2
+(Template t1) +> (Template t2) = Template $ t1 >+> t2
 
 -- | A hole.
 hole :: Natural
      -> Template
-hole = Template . Hole
+hole i = Template $ Compose "" i (Chunk "")
 
 -- | A chunk is a substring to a larger string.
 chunk :: DT.Text -- ^ Substring.
@@ -149,35 +99,36 @@ chunk = Template . Chunk
 -- printing. The `Show` instance for `Template` is set to pretty print, but for
 -- debugging it is sometimes useful to see the raw AST.
 showAST :: Template -> DT.Text
-showAST (Template (Chunk chk))     = "Chunk " <> DT.show chk
-showAST (Template (Hole h))        = "Hole "  <> (DT.show h)
-showAST (Template (Compose t1 t2)) = "Compose (" 
-                                  <> showAST (Template t1) 
-                                  <> ") ("
-                                  <> showAST (Template t2)
-                                  <> ")"
+showAST (Template (Chunk x))       = "Chunk "   <> (DT.show x)
+showAST (Template (Compose p h r)) = "Compose " <> (DT.show p) <> " " <> (DT.show h) <> " (" <> (showAST (Template r)) <> ")"
 
 -- | Plugs every hole in a template using the given plug function. If the plug
 -- function is defined for every hole in the input template, then this function
--- guarantees a template with no holes (a string) is returned.
+-- guarantees a template with no holes (a text) is returned.
 plug :: Template                     -- ^ Template to plug
      -> (Natural -> Maybe DT.Text)   -- ^ Plug function
      -> Maybe DT.Text
 plug (Template t) f = 
-    case _plug f t of
-        Nothing -> Nothing
+    case _plug f t of        
         Just (Chunk c) -> Just c
+        _ -> Nothing
+    where
+        -- | Main logic for plug.
+        _plug 
+            :: (Natural -> Maybe DT.Text) -- ^ Plug function.
+            -> ITemplate n                -- ^ ITemplate to plug.
+            -> Maybe (ITemplate 0)
+        _plug f (Compose chk h r) = do
+            chk' <- f h
+            Chunk chk'' <- _plug f r
+            return . Chunk $ chk <> chk' <> chk''
+        _plug _ t@(Chunk _) = Just t
 
--- | Main logic for plug.
-_plug 
-    :: (Natural -> Maybe DT.Text) -- ^ Plug function.
-    -> ITemplate n                -- ^ ITemplate to plug.
-    -> Maybe (ITemplate 0)
-_plug f (Hole i) = do
-    c <- f i 
-    return $ Chunk c
-_plug f (Compose t1 t2) = do
-    Chunk t1' <- _plug f t1
-    Chunk t2' <- _plug f t2
-    return $ Chunk $ t1' <> t2'
-_plug _ (Chunk t) = return $ Chunk t
+-- | Convert a template into a regular expression. This is used to match against
+-- a template.
+toRegex :: Template -> DT.Text
+toRegex (Template t) = _toRegex t
+    where
+        _toRegex :: ITemplate n -> DT.Text
+        _toRegex (Chunk chk)       = chk
+        _toRegex (Compose chk _ r) = chk <> ".*" <> _toRegex r
