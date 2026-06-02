@@ -25,7 +25,7 @@ module Data.StringTemplate (-- * Templates
                            ,plug
                            -- ** Equality and Matching
                            ,(==>)
-                           ,match
+                           ,regexMatch
                            -- * Quasi-Quoter for Templates
                            ,template
                            ,stringTemplate2QExp

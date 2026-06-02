@@ -11,25 +11,25 @@ testJSONChunk1 :: (Template,Template)
 testJSONChunk1 = ([template|this is a chunk|],chunk "this is a chunk")
 
 testJSONChunk2 :: (Template,Template)
-testJSONChunk2 = ([template| |],Template $ Chunk " ")
+testJSONChunk2 = ([template| |],Template (Chunk " ") [])
 
 testJSONChunk3 :: (Template,Template)
-testJSONChunk3 = ([template|😩|],Template $ Chunk "😩")
+testJSONChunk3 = ([template|😩|],Template (Chunk "😩") [])
 
 testHole1 :: (Template,Template)
-testHole1 = ([template|${1}${2}${3}|],Template $ Compose "" 1 (Compose "" 2 (Compose "" 3 (Chunk ""))))
+testHole1 = ([template|${1}${2}${3}|],Template (Compose "" 1 (Compose "" 2 (Compose "" 3 (Chunk "")))) [1,2,3])
 
 testHole2 :: (Template,Template)
-testHole2 = ([template|${1}${2}-${3}|],Template $ Compose "" 1 (Compose "" 2 (Compose "-" 3 (Chunk ""))))
+testHole2 = ([template|${1}${2}-${3}|],Template (Compose "" 1 (Compose "" 2 (Compose "-" 3 (Chunk "")))) [1,2,3])
 
 testHole3 :: (Template,Template)
-testHole3 = ([template|this ${1} and ${2} is ${1}|],Template $ Compose "this " 1 (Compose " and " 2 (Compose " is " 1 (Chunk ""))))
+testHole3 = ([template|this ${1} and ${2} is ${1}|],Template (Compose "this " 1 (Compose " and " 2 (Compose " is " 1 (Chunk "")))) [1,2])
 
 testHole4 :: (Template,Template)
-testHole4 = ([template|Hi ${1}!|], Template $ Compose "Hi " 1 (Chunk "!"))
+testHole4 = ([template|Hi ${1}!|], Template (Compose "Hi " 1 (Chunk "!")) [1])
 
 testHole5 :: (Template,Template)
-testHole5 = ([template|Hi ❤️, ${1} ‼|], Template $ Compose "Hi ❤️, " 1 (Chunk " ‼"))
+testHole5 = ([template|Hi ❤️, ${1} ‼|], Template (Compose "Hi ❤️, " 1 (Chunk " ‼")) [1])
 
 testJSONHole1 :: (Template,Template)
 testJSONHole1 = ([template|
@@ -37,10 +37,10 @@ testJSONHole1 = ([template|
     "forename": "${1}", 
     "surname": "${2}"
 }
-|],Template $ Compose "\n{\n    \"forename\": \"" 1 (Compose "\", \n    \"surname\": \"" 2 (Chunk "\"\n}\n")))
+|],Template (Compose "\n{\n    \"forename\": \"" 1 (Compose "\", \n    \"surname\": \"" 2 (Chunk "\"\n}\n"))) [1,2])
 
 testJSONHole2 :: (Template,Template)
-testJSONHole2 = ([template|{"forename":"${1}","surname":"${2}"}|],Template $ Compose "{\"forename\":\"" 1 (Compose "\",\"surname\":\"" 2 (Chunk "\"}")))
+testJSONHole2 = ([template|{"forename":"${1}","surname":"${2}"}|],Template (Compose "{\"forename\":\"" 1 (Compose "\",\"surname\":\"" 2 (Chunk "\"}"))) [1,2])
 
 -- Next tests:
 -- 1. Plugging templates

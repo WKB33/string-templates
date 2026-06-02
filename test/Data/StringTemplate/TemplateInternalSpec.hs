@@ -9,8 +9,8 @@ Various properties of the internals of the string templates API.
 -}
 module  Data.StringTemplate.TemplateInternalSpec (spec) where
 
-import Test.Hspec            ( describe, Spec )
-import Test.QuickCheck       (Property, Testable (property))
+import Test.Hspec            (describe, Spec )
+import Test.QuickCheck       (Property, Testable (property), verboseCheck)
 import Test.Hspec.QuickCheck (prop)
 
 import Data.StringTemplate.TemplateInternal
@@ -23,7 +23,7 @@ prop_identityCompose :: Template -> Property
 prop_identityCompose t = property $ (t +> (chunk "")) == t && ((chunk "") +> t) == t
 
 prop_reflexiveMatch :: Template -> Property
-prop_reflexiveMatch t = property $ match t (toRegex t)
+prop_reflexiveMatch t = property $ regexMatch t (toRegex t)
 
 -- Write a function to get all the hole labels from a template.
 -- Use this to plug every hole, then use this + match to show the template is

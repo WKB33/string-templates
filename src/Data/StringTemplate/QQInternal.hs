@@ -115,7 +115,7 @@ appInfixCombinator constName e1 e2 = TH.infixE (Just e1) (TH.varE constName) (Ju
 
 -- | Convert a `Template` into a Template Haskell expression.
 template2QExp :: Template -> Q Exp
-template2QExp (Template it) = iTemplate2QExp it
+template2QExp (Template it _) = iTemplate2QExp it
 
 -- * Helpful Template Haskell combinators.
 

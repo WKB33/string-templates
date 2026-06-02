@@ -20,6 +20,7 @@ be defined to replace the holes with strings; see `plug`.
 {-# LANGUAGE TypeApplications             #-}
 {-# LANGUAGE BangPatterns                 #-}
 {-# LANGUAGE TypeAbstractions             #-}
+{-# LANGUAGE TupleSections #-}
 module Data.StringTemplate.TemplateInternal where
 
 import GHC.TypeNats            (type (+)
@@ -32,8 +33,10 @@ import Data.Constraint         (Dict (..)
 import Data.Constraint.Nat     (plusAssociates
                                ,plusCommutes)
 import Text.Regex.TDFA         ((=~))
+import Data.List               (union, delete)
+import Data.Constraint.Unsafe (unsafeAxiom)
 
--- | A internal template with `n` holes. 
+-- | An internal template with `n` holes. 
 data ITemplate (n :: Nat) where
     Chunk   :: DT.Text -> ITemplate 0
     Compose :: DT.Text -> Natural -> ITemplate n -> ITemplate (S n)
@@ -46,11 +49,11 @@ instance Show (ITemplate n) where
 -- | A template with pluggable holes. We do not expose the underlying
 -- constructors in favor of the combinators.
 data Template where
-    Template :: ITemplate m -> Template
+    Template :: (ITemplate m) -> [Natural] -> Template
 
 instance Show Template where
     show :: Template -> String
-    show (Template t) = show t
+    show (Template t _) = show t
 
 -- | Equality of ITemplates.
 (>==>) :: forall m n.
@@ -70,7 +73,7 @@ instance Eq Template where
 (==>) :: Template
       -> Template
       -> Bool
-(Template t1) ==> (Template t2) = t1 >==> t2
+(Template t1 _) ==> (Template t2 _) = t1 >==> t2    
 
 -- | Composition of ITemplates.
 (>+>) :: forall m n.
@@ -88,35 +91,70 @@ instance Eq Template where
 (+>) :: Template
      -> Template
      -> Template
-(Template t1) +> (Template t2) = Template $ t1 >+> t2
+(Template t1 hls1) +> (Template t2 hls2) = Template (t1 >+> t2) (hls1 `union` hls2) 
 
 -- | A hole.
 hole :: Natural
      -> Template
-hole i = Template $ Compose "" i (Chunk "")
+hole i = Template (Compose "" i (Chunk "")) [i]
 
 -- | A chunk is a substring to a larger string.
 chunk :: DT.Text -- ^ Substring.
       -> Template
-chunk = Template . Chunk
+chunk = flip Template [] .  Chunk
 
 -- | Convert a template into a `Text`, but in AST form rather than pretty
 -- printing. The `Show` instance for `Template` is set to pretty print, but for
 -- debugging it is sometimes useful to see the raw AST.
 showAST :: Template -> DT.Text
-showAST (Template (Chunk x))       = "Chunk "   <> (DT.show x)
-showAST (Template (Compose p h r)) = "Compose " <> (DT.show p) <> " " <> (DT.show h) <> " (" <> (showAST (Template r)) <> ")"
+showAST (Template (Chunk x) _)         = "Chunk "   <> (DT.show x)
+showAST (Template (Compose p h r) hls) = "Compose " <> (DT.show p) <> " " <> (DT.show h) <> " (" <> (showAST (Template r hls)) <> ")"
+
+-- | Get the list of hole indices present in a template.
+holes :: Template  -- ^ Template 
+      -> [Natural]
+holes (Template _ hls) = hls
+
+-- | Convert a template with no holes, a chunk, into a text.
+chunkToText :: Template      -- ^ Template
+            -> Maybe DT.Text
+chunkToText (Template (Chunk c) []) = pure c
+chunkToText _ = Nothing
+
+-- | Plug a hole in a template with some text. Returns @Nothing@ when the hole
+-- index doesn't exist in the template, otherwise returns a template with the
+-- hole filled.
+plug :: Template 
+     -> Natural
+     -> DT.Text
+     -> Maybe Template
+plug (Template (Chunk _) _) _ _                          = Nothing
+plug (Template t@(Compose _ _ _) hls) i c | i `elem` hls = do t' <- _plug t
+                                                              pure $ Template t' (i `delete` hls)
+                                          | otherwise    = Nothing
+    where
+        pf1 :: forall n1 n2.Dict ((n1 + 1) ~ (n2 + 1)) -> Dict (n1 ~ n2)
+        pf1 Dict = unsafeAxiom
+
+        _plug :: ITemplate (S n)
+              -> Maybe (ITemplate n)
+        _plug @n1 (Compose @n2 p h (Chunk s)) | i == h   = (pure $ Chunk $ p <> c <> s) \\ pf1 @n1 @n2 Dict
+                                              | otherwise = Nothing
+        _plug @n1 (Compose @n2 p h r@(Compose p' h' s)) | i == h    = pure $ Compose (p <> c <> p') h' s \\ pf1 @n1 @n2 Dict
+                                                        | otherwise = do r' <- _plug r
+                                                                         pure $ Compose p h r' \\ pf1 @n1 @n2 Dict
+        _plug _ = Nothing
 
 -- | Plugs every hole in a template using the given plug function. If the plug
 -- function is defined for every hole in the input template, then this function
 -- guarantees a template with no holes (a text) is returned.
-plug :: Template                     -- ^ Template to plug
-     -> (Natural -> Maybe DT.Text)   -- ^ Plug function
-     -> Maybe DT.Text
-plug (Template t) f = 
-    case _plug f t of        
+plugAll :: Template                                   -- ^ Template to plug
+        -> ([Natural] -> (Natural -> Maybe DT.Text))  -- ^ Plug function
+        -> Maybe DT.Text
+plugAll (Template t hls) f = 
+    case _plug (f hls) t of        
         Just (Chunk c) -> Just c
-        _ -> Nothing
+        _              -> Nothing
     where
         -- | Main logic for plug.
         _plug 
@@ -127,12 +165,12 @@ plug (Template t) f =
             chk' <- f h
             Chunk chk'' <- _plug f r
             return . Chunk $ chk <> chk' <> chk''
-        _plug _ t@(Chunk _) = Just t
+        _plug _ t@(Chunk _) = return t
 
 -- | Convert a template into a regular expression. This is used to match against
 -- a template.
 toRegex :: Template -> DT.Text
-toRegex (Template t) = _toRegex t
+toRegex (Template t _) = _toRegex t
     where
         _toRegex :: ITemplate n -> DT.Text
         _toRegex (Chunk chk)       = chk
@@ -141,9 +179,13 @@ toRegex (Template t) = _toRegex t
 -- | Match a string against a template. Outputs @True@ when the entire string
 -- matches the template where all its holes are plugged with the regular
 -- expression @.*@.
-match :: Template -- ^ Template to be matched on
+regexMatch :: Template -- ^ Template to be matched on
       -> DT.Text  -- ^ String to match against
       -> Bool
-match t s = s =~ regex
+regexMatch (Template (Chunk "") []) "" = True
+regexMatch t                        s  = s =~ regex
     where
         regex = toRegex t
+
+toRegexLit :: Template -> Template
+toRegexLit t = t

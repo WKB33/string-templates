@@ -16,6 +16,7 @@ import GHC.TypeLits                         (Natural)
 import Test.QuickCheck                      (Gen, Arbitrary (arbitrary), generate, frequency)
 import Test.QuickCheck.Instances.Text       ()
 import Test.QuickCheck.Instances.Natural    ()
+import Data.Text                            qualified as DT
 
 import Data.StringTemplate.TemplateInternal
 
@@ -27,9 +28,11 @@ genHole = hole <$> arbitrary
 
 genTemplateNat :: Natural -> Gen Template
 genTemplateNat 0 = genChunk
-genTemplateNat n = do (Template t) <- genTemplateNat $ n - 1
-                      let t' = Compose <$> arbitrary <*> arbitrary <*> (return t)
-                      Template <$> t'
+genTemplateNat n = do (Template t hls) <- genTemplateNat $ n - 1
+                      h <- arbitrary :: Gen Natural
+                      c <- arbitrary :: Gen DT.Text
+                      let t' = Compose c h t
+                      pure $ Template t' (h : hls)
 
 genTemplate :: Gen Template
 genTemplate = arbitrary >>= genTemplateNat
