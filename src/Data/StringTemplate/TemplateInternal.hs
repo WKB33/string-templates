@@ -17,52 +17,56 @@ be defined to replace the holes with strings; see `plug`.
 {-# LANGUAGE ScopedTypeVariables          #-}
 {-# LANGUAGE RankNTypes                   #-}
 {-# OPTIONS_GHC -Wno-missing-export-lists #-}
+{-# OPTIONS_GHC -freduction-depth=0       #-}
 {-# LANGUAGE TypeApplications             #-}
 {-# LANGUAGE BangPatterns                 #-}
 {-# LANGUAGE TypeAbstractions             #-}
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TupleSections                #-}
 module Data.StringTemplate.TemplateInternal where
 
-import GHC.TypeNats            (type (+)
-                               ,Natural
-                               ,Nat)
-import Data.Type.Natural       (S)
+import GHC.TypeNats            (Natural)
 import Data.Text               qualified as DT
-import Data.Constraint         (Dict (..)
-                               ,(\\))
-import Data.Constraint.Nat     (plusAssociates
-                               ,plusCommutes)
-import Text.Regex.TDFA         ((=~))
-import Data.List               (union, delete)
-import Data.Constraint.Unsafe (unsafeAxiom)
+import Data.List               (union
+                               ,delete)
+import Text.Megaparsec         (Parsec
+                               ,parseMaybe)
+import Text.Megaparsec.Char    (string)
+import Data.Void               (Void)
+import Data.Maybe              (isNothing)
 
--- | An internal template with `n` holes. 
-data ITemplate (n :: Nat) where
-    Chunk   :: DT.Text -> ITemplate 0
-    Compose :: DT.Text -> Natural -> ITemplate n -> ITemplate (S n)
+-- | A hole is an index and a possible filling.
+type Hole = (Natural, Maybe DT.Text)
 
-instance Show (ITemplate n) where
-    show :: ITemplate n -> String    
-    show (Chunk t)       = DT.unpack t
-    show (Compose prefix h rest) = DT.unpack prefix <> "${" <> show h <> "}" <> show rest
+-- | An indexed templates with @m@ unfilled holes.
+data ITemplate  where
+    Chunk   :: DT.Text -> ITemplate
+    Compose :: DT.Text -> Hole -> ITemplate -> ITemplate
+
+instance Show ITemplate where
+    show :: ITemplate -> String    
+    show (Chunk t)                           = DT.unpack t
+    show (Compose   prefix (i,Nothing) rest) = DT.unpack prefix <> "$" <> show i <> "{}" <> show rest
+    show (Compose   prefix (i,Just c) rest)  = DT.unpack prefix <> "$" <> show i <> "{"  <> DT.unpack c <>"}" <> show rest
 
 -- | A template with pluggable holes. We do not expose the underlying
 -- constructors in favor of the combinators.
 data Template where
-    Template :: (ITemplate m) -> [Natural] -> Template
+    Template :: ITemplate                             -- ^ Indexed template
+             -> ([Natural],Natural,[Natural],Natural) -- ^ Unfilled hole indices, number of unfilled holes, filled hole indices, and number of filled holes
+             -> Template
 
 instance Show Template where
     show :: Template -> String
     show (Template t _) = show t
 
--- | Equality of ITemplates.
-(>==>) :: forall m n.
-          ITemplate m
-       -> ITemplate n
+-- | Equality of ITemplates. The contents of filled holes are included in the
+-- decision.
+(>==>) :: ITemplate 
+       -> ITemplate 
        -> Bool
-(Chunk chk1)        >==> (Chunk chk2)        = chk1 == chk2
-(Compose chk1 _ r1) >==> (Compose chk2 _ r2) = (chk1 == chk2 && r1 >==> r2) 
-_                   >==> _                   = False
+(Chunk chk1)               >==> (Chunk chk2)               = chk1 == chk2
+(Compose   chk1 (_,c1) r1) >==> (Compose   chk2 (_,c2) r2) = chk1 == chk2 && c1 == c2 && r1 >==> r2
+_                          >==> _                          = False
 
 instance Eq Template where
     (==) :: Template -> Template -> Bool
@@ -75,117 +79,176 @@ instance Eq Template where
       -> Bool
 (Template t1 _) ==> (Template t2 _) = t1 >==> t2    
 
+-- | An empty hole.
+hole :: Natural -- ^ Hole index
+     -> Template
+hole i = flip Template ([i],1,[],0) $ Compose "" (i,Nothing) (Chunk "")
+
+-- | A filled hole.
+filled :: Natural -- ^ Hole index
+       -> DT.Text -- ^ Hole Filling
+       -> Template
+filled i c = flip Template ([],0,[i],1) $ (Compose "" (i, Just c) (Chunk ""))
+
+-- | A chunk is a substring to a larger string.
+chunk :: DT.Text -- ^ Substring.
+      -> Template
+chunk = flip Template ([],0,[],0) .  Chunk
+
 -- | Composition of ITemplates.
-(>+>) :: forall m n.
-         ITemplate m 
-      -> ITemplate n 
-      -> ITemplate (m+n)
-(Chunk chk1)        >+> (Chunk chk2)    = Chunk $ chk1 <> chk2
-(Chunk chk)         >+> (Compose p h r) = Compose (chk <> p) h r
-(Compose @n1 p h r) >+> t               = (Compose p h $ r >+> t) \\ p1 @m @n1 @n
-    where
-        p1 :: forall m n1 n . m ~ (n1 + 1) => Dict (((n1 + n) + 1) ~ (m + n))
-        p1 = Dict \\ plusCommutes @n1 @n \\ plusAssociates @n @n1 @1 \\ plusCommutes @n @m
+(>+>) :: ITemplate
+      -> ITemplate
+      -> ITemplate
+(Chunk chk1)    >+> (Chunk chk2)    = Chunk $ chk1 <> chk2
+(Chunk chk)     >+> (Compose p h r) = Compose (chk <> p) h r
+(Compose p h r) >+> t               = (Compose p h $ r >+> t) 
 
 -- | Composition of templates.
 (+>) :: Template
      -> Template
      -> Template
-(Template t1 hls1) +> (Template t2 hls2) = Template (t1 >+> t2) (hls1 `union` hls2) 
-
--- | A hole.
-hole :: Natural
-     -> Template
-hole i = Template (Compose "" i (Chunk "")) [i]
-
--- | A chunk is a substring to a larger string.
-chunk :: DT.Text -- ^ Substring.
-      -> Template
-chunk = flip Template [] .  Chunk
+(Template t1 (ufhs1,m1,fhs1,n1)) +> (Template t2 (ufhs2,m2,fhs2,n2)) 
+    = Template (t1 >+> t2) (ufhs1 `union` ufhs2,m1 + m2,fhs1 `union` fhs2,n1 + n2) 
 
 -- | Convert a template into a `Text`, but in AST form rather than pretty
 -- printing. The `Show` instance for `Template` is set to pretty print, but for
 -- debugging it is sometimes useful to see the raw AST.
 showAST :: Template -> DT.Text
-showAST (Template (Chunk x) _)         = "Chunk "   <> (DT.show x)
-showAST (Template (Compose p h r) hls) = "Compose " <> (DT.show p) <> " " <> (DT.show h) <> " (" <> (showAST (Template r hls)) <> ")"
+showAST (Template (Chunk x) _)                    = "Chunk "   <> (DT.show x)
+showAST (Template (Compose p (h, Nothing) r) hls) = "Compose " <> (DT.show p) <> " " <> (DT.show h) <> " (" <> (showAST (Template r hls)) <> ")"
+showAST (Template (Compose p (h, Just c)  r) hls) = "Compose " <> (DT.show p) <> " " <> (DT.show h) <> " " <> (DT.show c) <> " (" <> (showAST (Template r hls)) <> ")"
 
--- | Get the list of hole indices present in a template.
-holes :: Template  -- ^ Template 
-      -> [Natural]
-holes (Template _ hls) = hls
+-- | Get the list of unfilled-hole indices present in a template.
+-- @O(0)@
+unfilledHoles :: Template  -- ^ Template 
+              -> [Natural]
+unfilledHoles (Template _ (hls,_,_,_)) = hls
+
+-- | Get the list of filled-hole indices present in a template.
+-- @O(0)@
+filledHoles :: Template  -- ^ Template 
+            -> [Natural]
+filledHoles (Template _ (_,_,fhls,_)) = fhls
+
+-- | Get the number of unfilled holes in a template.
+-- @O(0)@
+numberOfUnfilledHoles :: Template  -- ^ Template 
+                      -> Natural
+numberOfUnfilledHoles (Template _ (_,m,_,_)) = m
+
+-- | Get the number of filled holes in a template.
+-- @O(0)@
+numberOfFilledHoles :: Template  -- ^ Template 
+                    -> Natural
+numberOfFilledHoles (Template _ (_,_,_,n)) = n
 
 -- | Convert a template with no holes, a chunk, into a text.
-chunkToText :: Template      -- ^ Template
+-- @O(0)@
+chunkToText :: Template      
             -> Maybe DT.Text
-chunkToText (Template (Chunk c) []) = pure c
-chunkToText _ = Nothing
+chunkToText (Template (Chunk c) ([],0,[],0)) = Just c
+chunkToText _                                = Nothing
 
--- | Plug a hole in a template with some text. Returns @Nothing@ when the hole
--- index doesn't exist in the template, otherwise returns a template with the
--- hole filled.
-plug :: Template 
-     -> Natural
-     -> DT.Text
-     -> Maybe Template
-plug (Template (Chunk _) _) _ _                          = Nothing
-plug (Template t@(Compose _ _ _) hls) i c | i `elem` hls = do t' <- _plug t
-                                                              pure $ Template t' (i `delete` hls)
-                                          | otherwise    = Nothing
-    where
-        pf1 :: forall n1 n2.Dict ((n1 + 1) ~ (n2 + 1)) -> Dict (n1 ~ n2)
-        pf1 Dict = unsafeAxiom
+fillHoleI :: ITemplate
+          -> Natural
+          -> DT.Text
+          -> Maybe ITemplate
+fillHoleI (Compose p (h,_) t) i c | h == i = do
+    t' <- fillHoleI t i c
+    Just $ Compose p (h, Just c) t'
+fillHoleI (Compose p hl t) i c = do
+    t' <- fillHoleI t i c
+    Just $ Compose p hl t'
+fillHoleI _ _ _ = Nothing
 
-        _plug :: ITemplate (S n)
-              -> Maybe (ITemplate n)
-        _plug @n1 (Compose @n2 p h (Chunk s)) | i == h   = (pure $ Chunk $ p <> c <> s) \\ pf1 @n1 @n2 Dict
-                                              | otherwise = Nothing
-        _plug @n1 (Compose @n2 p h r@(Compose p' h' s)) | i == h    = pure $ Compose (p <> c <> p') h' s \\ pf1 @n1 @n2 Dict
-                                                        | otherwise = do r' <- _plug r
-                                                                         pure $ Compose p h r' \\ pf1 @n1 @n2 Dict
-        _plug _ = Nothing
+fillHole :: Template
+         -> Natural  -- ^ Hole index to plug
+         -> DT.Text  -- ^ Hole filling
+         -> Maybe Template
+fillHole (Template t@(Compose _ _ _) st@(hls,m,fhls,n)) i c | i `elem` hls || i `elem` fhls = do 
+    t' <- fillHoleI t i c
+    if i `elem` hls
+    then Just $ Template t' (i `delete` hls,m - 1,i:fhls,n + 1)
+    else if i `elem` fhls
+         then Just $ Template t' st
+         else Nothing
+fillHole _ _ _ = Nothing
+
+-- | Plug an unfilled hole in a template with some text. Returns @Nothing@ when
+-- the hole index doesn't exist in the template or is filled, otherwise returns
+-- a template with the hole plugged.
+plugHoleI :: ITemplate -- ^ Template to plug
+          -> Natural   -- ^ Hole index to plug
+          -> DT.Text   -- ^ Text to replace hole
+          -> Maybe ITemplate
+plugHoleI (Compose p (h,f) (Chunk s)) i c 
+    | i == h && isNothing f = Just $ Chunk $ p <> c <> s
+plugHoleI (Compose p hl@(h,f) r@(Compose p' h' s))  i c 
+    | i == h && isNothing f = Just $ Compose (p <> c <> p') h' s
+    | otherwise = do r' <- plugHoleI r i c
+                     Just $ Compose p hl r'
+plugHoleI _ _ _ = Nothing       
+
+-- | Plug an unfilled hole in a template with some text. Returns @Nothing@ when
+-- the hole index doesn't exist in the template or is filled, otherwise returns
+-- a template with the hole plugged.
+plugHole :: Template -- ^ Template to plug
+         -> Natural  -- ^ Hole index to plug
+         -> DT.Text  -- ^ Text to replace hole
+         -> Maybe Template
+plugHole (Template t@(Compose _ _ _) (hls,m,fhls,n)) i c | i `elem` hls = 
+        do t' <- plugHoleI t i c
+           pure $ Template t' (i `delete` hls,m - 1,fhls,n)
+plugHole _ _ _ = Nothing
 
 -- | Plugs every hole in a template using the given plug function. If the plug
--- function is defined for every hole in the input template, then this function
--- guarantees a template with no holes (a text) is returned.
+-- function is defined for every unfilled hole in the input template, then this function
+-- guarantees a template with no holes (a text) is returned where all filled
+-- holes are replaced with their filling.
+plugAllI 
+    :: (Natural -> Maybe DT.Text) -- ^ Plug function.
+    -> ITemplate                  -- ^ ITemplate to plug.
+    -> Maybe ITemplate
+plugAllI f (Compose chk (h,Nothing) r) = do
+    chk' <- f h
+    Chunk chk'' <- plugAllI f r
+    return . Chunk $ chk <> chk' <> chk''
+plugAllI f (Compose chk (_, (Just c)) r) = do
+    Chunk chk'' <- plugAllI f r
+    return . Chunk $ chk <> c <> chk''
+plugAllI _ t@(Chunk _) = return t
+
+-- | Plugs every hole in a template using the given plug function. If the plug
+-- function is defined for every unfilled hole in the input template, then this function
+-- guarantees a template with no holes (a text) is returned where all filled
+-- holes are replaced with their filling.
 plugAll :: Template                                   -- ^ Template to plug
         -> ([Natural] -> (Natural -> Maybe DT.Text))  -- ^ Plug function
         -> Maybe DT.Text
-plugAll (Template t hls) f = 
-    case _plug (f hls) t of        
+plugAll (Template t (hls,_,_,_)) f = 
+    case plugAllI (f hls) t of        
         Just (Chunk c) -> Just c
         _              -> Nothing
-    where
-        -- | Main logic for plug.
-        _plug 
-            :: (Natural -> Maybe DT.Text) -- ^ Plug function.
-            -> ITemplate n                -- ^ ITemplate to plug.
-            -> Maybe (ITemplate 0)
-        _plug f (Compose chk h r) = do
-            chk' <- f h
-            Chunk chk'' <- _plug f r
-            return . Chunk $ chk <> chk' <> chk''
-        _plug _ t@(Chunk _) = return t
 
--- | Convert a template into a regular expression. This is used to match against
--- a template.
-toRegex :: Template -> DT.Text
-toRegex (Template t _) = _toRegex t
-    where
-        _toRegex :: ITemplate n -> DT.Text
-        _toRegex (Chunk chk)       = chk
-        _toRegex (Compose chk _ r) = chk <> ".*" <> _toRegex r
+type Parser = Parsec Void DT.Text
 
--- | Match a string against a template. Outputs @True@ when the entire string
--- matches the template where all its holes are plugged with the regular
--- expression @.*@.
-regexMatch :: Template -- ^ Template to be matched on
-      -> DT.Text  -- ^ String to match against
-      -> Bool
-regexMatch (Template (Chunk "") []) "" = True
-regexMatch t                        s  = s =~ regex
-    where
-        regex = toRegex t
+templateParser :: ITemplate -> Parser DT.Text
+templateParser (Chunk c)   = string c
+templateParser (Compose p (_,Just f) t) = do
+    prefixParser <- string p
+    fillingParser <- string f
+    subtemplateParser <- templateParser t
+    pure $ prefixParser <> fillingParser <> subtemplateParser    
+templateParser _ = error "unreachable branch in templateParser"
 
-toRegexLit :: Template -> Template
-toRegexLit t = t
+data MatchResult = Matched | Unmatched | UnfilledTemplate
+    deriving Show
+
+match :: Template -> DT.Text -> MatchResult
+match (Template t ([],0,_,_)) s = 
+    maybe Unmatched (const Matched) $ parseMaybe parser s
+    where
+        parser = templateParser t
+match _  _ = UnfilledTemplate
+
+

@@ -92,7 +92,7 @@ stringTemplate2QExp = flip (.) (parseTemplate . DT.pack) $ \case {
     } 
 
 -- | Convert an `ITemplate` into a Template Haskell expression.
-iTemplate2QExp :: ITemplate n -> Q Exp
+iTemplate2QExp :: ITemplate -> Q Exp
 iTemplate2QExp (Chunk chk) = do
     let chunk = TH.mkName "chunk"
     appCombinator1 chunk $ mkTextLit chk  

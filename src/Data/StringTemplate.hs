@@ -22,10 +22,8 @@ module Data.StringTemplate (-- * Templates
                            ,(+>)
                            ,showAST
                            -- ** Plugging Holes in Templates
-                           ,plug
                            -- ** Equality and Matching
                            ,(==>)
-                           ,regexMatch
                            -- * Quasi-Quoter for Templates
                            ,template
                            ,stringTemplate2QExp
