@@ -12,7 +12,8 @@ templates.
 module Data.StringTemplate.Parser (
      -- * Parsing Templates
      parseTemplate
-    ,templateParser) where
+    ,templateParser
+    ,templateParserTest) where
 
 import Text.Megaparsec                      (Parsec
                                             ,between
@@ -21,7 +22,10 @@ import Text.Megaparsec                      (Parsec
                                             ,some
                                             ,satisfy
                                             ,choice
-                                            ,atEnd, parse, errorBundlePretty)
+                                            ,atEnd
+                                            ,parseTest
+                                            ,parse
+                                            ,errorBundlePretty)
 import Data.Char                            qualified as DT
 import Data.Text                            qualified as DT
 import Data.Void                            (Void)
@@ -37,8 +41,12 @@ import Data.StringTemplate.TemplateInternal (pattern Chunk
 parseTemplate :: DT.Text -> Either DT.Text Template
 parseTemplate s 
     = case parse templateParser "" s of
-        Left bundle -> Left . DT.pack $ errorBundlePretty bundle
+        Left bundle -> Left . DT.pack $ "string-templates: " <> errorBundlePretty bundle
         Right t -> Right t
+
+-- | Convenient function for testing the parser in GHCi.
+templateParserTest :: DT.Text -> IO ()
+templateParserTest = parseTest templateParser
 
 -- | The parser operates on a stream of `Text`.
 type Parser = Parsec Void DT.Text
@@ -80,12 +88,12 @@ templateParser = do
             t <- templateParser
             pure $ Compose mc h t
 
--- | Parse a template character. This is any unicode character where the
--- characters @['$','{','}','\\']@ are escaped, because they are reserved tokens
--- for holes.
+-- | Parse a template character. These are any unicode character where the
+-- characters @['$','{','}','\\']@ are escaped when parsing a hole's filling,
+-- otherwise just @'$'@ needs to be escaped.
 templateCharParser :: Bool -> Parser DT.Char
 templateCharParser filling = choice [
-        satisfy (\c -> c /= '$' && (if filling then c /= '{' && c /= '}' else True) && c /= '\\'),
+        satisfy (\c -> c /= '$' && c /= '\'' && (if filling then c /= '{' && c /= '}' else True) && c /= '\\'),
         escapedTemplateCharParser
     ]
 

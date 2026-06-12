@@ -11,18 +11,21 @@ respect to the [ECMA-404 The JSON Data Interchange
 Standard](https://www.json.org/json-en.html).
 -}
 module  Data.StringTemplate.JSON () where
-import Text.Megaparsec (Parsec, between, sepBy, skipCount, many, some, satisfy, choice)
+import Text.Megaparsec (Parsec, between, parseTest, sepBy, skipCount, many, some, satisfy, choice, (<|>), parse, errorBundlePretty, count, sepBy1, atEnd)
 import qualified Data.Text as DT
 import Data.Void (Void)
-import Text.Megaparsec.Char (char)
+import Text.Megaparsec.Char (char, string)
 
 import Data.StringTemplate
 import Data.Char (isPrint)
-import Data.StringTemplate.Parser (templateParser)
+import Data.StringTemplate.Parser (templateParser, parseTemplate)
 
 data FieldValue    = VT Template | VO JSONObject
+    deriving Show
+
 type Field         = (DT.Text,FieldValue)
 newtype JSONObject = JSONObject [Field]
+    deriving Show
 
 object :: JSONObject -> Template
 object (JSONObject fields) = chunk "{" +> fieldsTemplate +> chunk "}"
@@ -38,21 +41,32 @@ field (DT.show -> label,VO obj)   = chunk (label <> ": ") +> object obj
 
 type Parser = Parsec Void DT.Text
 
+parseJSON :: DT.Text -> Either DT.Text JSONObject
+parseJSON s 
+    = case parse parseJSONObject "" s of
+        Left bundle -> error $ errorBundlePretty bundle
+        Right s -> Right s
+
 parseJSONObject :: Parser JSONObject
 parseJSONObject = do
     f <- between (char '{') (char '}') parseFields
     pure . JSONObject $ f
 
 parseFields :: Parser [Field]
-parseFields = sepBy parseField (char ',')
+parseFields =  sepBy1 parseField (string ",")
 
 parseFieldLabel :: Parser DT.Text
 parseFieldLabel = parseQuoted parseChars
 
-parseFieldValue :: Parser FieldValue
-parseFieldValue = undefined
+parseFieldVT :: Parser FieldValue
+parseFieldVT = VT <$> parseStrTemplate
 
--- Need to use the witness for the label and value
+parseFieldOT :: Parser FieldValue
+parseFieldOT = VO <$> parseJSONObject
+
+parseFieldValue :: Parser FieldValue
+parseFieldValue = parseFieldVT <|> parseFieldOT
+
 parseField :: Parser Field
 parseField = do
     l <- parseFieldLabel
@@ -62,10 +76,14 @@ parseField = do
 
 -- * Parser combinators
 parseStrTemplate :: Parser Template
-parseStrTemplate = templateParser
+parseStrTemplate = do
+    s <- between (char '\'') (char '\'') parseChars
+    case parseTemplate s of
+        Left err -> fail . DT.unpack $ err
+        Right t -> pure $ t
 
 parseQuoted :: Parser a -> Parser a
-parseQuoted p =  (between (some "'")  (some "'")  p)              
+parseQuoted p =  (between (string "\"")  (string "\"")  p)              
 
 parseColon :: Parser ()
 parseColon = skipCount 1 $ char ':'

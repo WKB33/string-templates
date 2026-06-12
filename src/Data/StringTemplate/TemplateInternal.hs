@@ -89,6 +89,7 @@ null :: Template -> Bool
 null (Template (IChunk "") ([],0,[],0)) = True
 null _ = False
 
+-- | A filled template is one where every hole has a filling.
 newtype FilledTemplate = FilledTemplate Template
 
 instance Show Template where
