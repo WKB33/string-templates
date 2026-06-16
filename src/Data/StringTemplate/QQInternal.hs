@@ -69,9 +69,11 @@ appInfixCombinator :: TH.Quote m
                    -> m Exp 
 appInfixCombinator constName e1 e2 = TH.infixE (Just e1) (TH.varE constName) (Just e2)
 
--- | Convert a `Template` into a Template Haskell expression.
-template2QExp :: Template -> Q Exp
-template2QExp (Template it _) = iTemplate2QExp it
+-- | Convert a type that can be converted into a template into a Template
+-- Haskell expression. Use this to create new quasi-quoters for types that
+-- convert to template.
+template2QExp :: ToTemplate a => a -> Q Exp
+template2QExp (toTemplate -> Template it _) = iTemplate2QExp it
 
 -- * Helpful Template Haskell combinators.
 

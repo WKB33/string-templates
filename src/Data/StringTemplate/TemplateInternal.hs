@@ -29,6 +29,7 @@ import Data.Text               qualified as DT
 import Data.List               (union
                                ,delete)
 import Data.Maybe              (isNothing)
+import Control.Applicative     (Alternative ((<|>)))
 
 -- | A hole has an index and a possible filling.
 type Hole = (Natural, Maybe DT.Text)
@@ -355,3 +356,23 @@ bracketTemplate = betweenTemplate (chunk "[") (chunk "]")
 -- | Add braces `{}` around the input template.
 braceTemplate :: Template -> Template
 braceTemplate = betweenTemplate (chunk "{") (chunk "}")
+
+-- | Template Union of types. Use this to add string templates to various
+-- locations within some structure data.
+data TU a = StrTU Template | LitTU a
+
+-- | Parse a template union given a parser for templates and a parser for the
+-- type being combined with templates.
+parseTU :: Alternative m => m Template -> m a -> m (TU a)
+parseTU tempParser p =  StrTU <$> tempParser
+                    <|> LitTU <$> p
+
+instance Show a => Show (TU a) where
+    show :: TU a -> String
+    show (StrTU t) = show t
+    show (LitTU l) = show l
+
+instance ToTemplate a => ToTemplate (TU a) where
+    toTemplate :: TU a -> Template
+    toTemplate (StrTU t) = t
+    toTemplate (LitTU l) = toTemplate l

@@ -55,12 +55,17 @@ module Data.StringTemplate (-- * Templates
                            -- * Quasi-Quoter for Templates
                            ,template
                            ,stringTemplate2QExp
+                           ,template2QExp
                            -- * Text Combinators
                            ,between
                            ,braces
                            ,brackets
                            ,prettyList
+                           ,prettyDouble
                            ,doubleQuote
+                           -- * Combining Templates with Other Types
+                           ,TU(..)
+                           ,parseTU
                            ) where
 
 import Data.StringTemplate.Text

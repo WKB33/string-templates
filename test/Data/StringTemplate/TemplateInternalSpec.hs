@@ -33,7 +33,7 @@ prop_matchReflexivity (FilledTemplate t) = property $ match t tx == Matched
 
 spec :: Spec 
 spec = do
-    describe "quick properties:" $ do
+    describe "QuickCheck properties:" $ do
         describe "composition" $ do
             prop "associativity" $
                 prop_associativeCompose

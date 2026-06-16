@@ -24,11 +24,11 @@ library
       Data.StringTemplate
       Data.StringTemplate.Text
       Data.StringTemplate.Parser
-      Data.StringTemplate.JSON      
-  other-modules:
-      Paths_string_templates
+      Data.StringTemplate.JSON
       Data.StringTemplate.TemplateInternal
       Data.StringTemplate.QQInternal
+  other-modules:
+      Paths_string_templates      
   autogen-modules:
       Paths_string_templates
   hs-source-dirs:
@@ -71,6 +71,7 @@ test-suite string-templates-test
       Data.StringTemplate.TemplateInternalSpec
       Data.StringTemplate.QQInternalSpec
       Test.QuickCheck.StringTemplate
+      Data.StringTemplate.JSONSpec
   autogen-modules:
       Paths_string_templates
   hs-source-dirs:

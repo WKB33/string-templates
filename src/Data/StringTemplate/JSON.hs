@@ -11,31 +11,52 @@ String templates for JSON. The main use of this library is to test JSON
 encoders/decoders, but there could be more use cases. This API is designed with
 respect to [RFC 8259: STD 90: The JavaScript Object Notation (JSON) Data Interchange Format](https://www.rfc-editor.org/info/rfc8259/).
 -}
-module  Data.StringTemplate.JSON (parseJSON) where
-import Text.Megaparsec (Parsec, between, skipCount, many, satisfy, choice, (<|>), parse, errorBundlePretty, sepBy1, sepBy)
-import qualified Data.Text as DT
-import Data.Void (Void)
-import Text.Megaparsec.Char (string, space)
-import Data.Char (isPrint)
-import Data.StringTemplate ((+>), chunk, Template, ToTemplate(..) ) 
-import Data.StringTemplate qualified as StrT
+module  Data.StringTemplate.JSON (jsonTemplate) where
+
+import Text.Megaparsec            (Parsec
+                                  ,between
+                                  ,skipCount
+                                  ,many
+                                  ,satisfy
+                                  ,choice
+                                  ,(<|>)
+                                  ,parse
+                                  ,errorBundlePretty
+                                  ,sepBy1
+                                  ,sepBy
+                                  ,parseTest)
+import Data.Text                  qualified as DT
+import Data.Void                  (Void)
+import Text.Megaparsec.Char       (string
+                                  ,space)
+import Data.Char                  (isPrint)
+import Text.Megaparsec.Char.Lexer (float
+                                  ,decimal
+                                  ,symbol)
+import Language.Haskell.TH        qualified as TH
+import Language.Haskell.TH.Quote  (QuasiQuoter(..))
+import Language.Haskell.TH.Quote  qualified as TH
+import Data.StringTemplate        ((+>)
+                                  ,chunk
+                                  ,Template
+                                  ,ToTemplate(..)
+                                  ,TU(..)) 
+import Data.StringTemplate        qualified as StrT
 import Data.StringTemplate.Parser qualified as StrT
-import Text.Megaparsec.Char.Lexer (float, symbol)
 
 -- * JSON Syntax
 
 -- | Type of fields of a JSON object.
-type Field = (DT.Text,Value)
+type Field = (DT.Text,TU Value)
 
 -- | JSON Value
 data Value 
-    = TempV  StrT.Template -- ^ String Template
-    | ObjV   [Field]       -- ^ Object
-    | ArrayV [Value]       -- ^ Array
-    | StrV   DT.Text       -- ^ String    
-    | NumV   Double        -- ^ Number
-    | BoolV  Bool          -- ^ Boolean
-    | NullV                -- ^ Null
+    = ObjV   [Field]    -- ^ Object
+    | ArrayV [TU Value] -- ^ Array
+    | StrV   DT.Text    -- ^ String    
+    | NumV   Double     -- ^ Number
+    | BoolV  Bool       -- ^ Boolean
+    | NullV             -- ^ Null
     deriving Show
 
 instance ToTemplate Value where
@@ -48,20 +69,20 @@ instance ToTemplate Field where
 
 -- | Create a template for a JSON value.
 value :: Value -> Template
-value (TempV  t)   = t
-value (ObjV   obj) = object obj
-value (ArrayV ary) = array ary
-value (StrV   s)   = chunk s
-value (NumV   n)   = chunk . DT.show $ n
-value (BoolV  b)   = chunk . DT.show $ b
-value NullV        = chunk "null"
+value (ObjV   obj)   = object obj
+value (ArrayV ary)   = array ary
+value (StrV   s)     = chunk $ StrT.doubleQuote s
+value (NumV   n)     = chunk . StrT.prettyDouble $ n
+value (BoolV  True)  = chunk "true"
+value (BoolV  False) = chunk "false"
+value NullV          = chunk "null"
 
 -- * Creating JSON templates
 
 -- | Create a template from a JSON object.
 object :: [Field] -- ^ List of fields of the object
-       -> StrT.Template
-object fields = StrT.betweenTemplate (chunk "{") (chunk "}") $ StrT.sepTemplatesBy (chunk ", ") fields
+       -> Template
+object fields = StrT.betweenTemplate (chunk "{") (chunk "}") $ StrT.sepTemplatesBy (chunk ",") fields
 
 --- | Create a template of a field of an object.
 field :: Field -- ^ Field of the object
@@ -71,12 +92,33 @@ field (DT.show -> label,value) = fieldLabel label +> toTemplate value
 -- | Create a template of a field label of a field of an object.
 fieldLabel :: DT.Text -- ^ Label of the field
            -> Template
-fieldLabel = chunk . (<> ": ") . StrT.doubleQuote
+fieldLabel = chunk . (<> ":") . StrT.doubleQuote
 
 -- | Create a template of an array value.
-array :: [Value] -- ^ List of values of the array
+array :: [TU Value] -- ^ List of values of the array
       -> Template
 array = StrT.bracketTemplate . StrT.sepTemplatesBy (chunk ",")
+
+-- * Quasi-quoter for JSON templates
+
+-- | The JSON Templates quasi-quoter.
+jsonTemplate :: TH.QuasiQuoter
+jsonTemplate = TH.QuasiQuoter {
+     quoteExp = jsonTemplate2QExp
+    ,quotePat = undefined
+    ,quoteDec = undefined
+    ,quoteType = undefined
+}
+
+-- | Parse and convert a string into a JSON template. First parses the input
+-- string into the internal language of JSON values, and then converts the
+-- parsed value into a template.
+jsonTemplate2QExp :: String
+                  -> TH.Q TH.Exp
+jsonTemplate2QExp = flip (.) (parseJSONTemplate . DT.pack) $ \case {
+         Right v  -> StrT.template2QExp v
+        ;Left err -> fail $ DT.unpack err
+    } 
 
 -- * JSON Templates Parser
 
@@ -86,9 +128,10 @@ type Tok    = DT.Text
 type Parser = Parsec Void Tok
 
 -- | The JSON parser.
-parseJSON :: DT.Text -- ^ Text to parse
-          -> Either DT.Text Value
-parseJSON s 
+parseJSONTemplate 
+    :: DT.Text -- ^ Text to parse
+    -> Either DT.Text Value
+parseJSONTemplate (DT.stripStart->s) 
     = case parse valueParser "" s of
         Left bundle -> error $ errorBundlePretty bundle
         Right s -> Right s
@@ -96,7 +139,6 @@ parseJSON s
 -- | Parse a JSON value
 valueParser :: Parser Value
 valueParser = objVParser
-           <|> tempVParser
            <|> strVParser   
            <|> arrayVParser                              
            <|> numVParser
@@ -115,10 +157,6 @@ fieldsParser =  sepBy1 fieldParser commaTok
 fieldLabelParser :: Parser DT.Text
 fieldLabelParser = doubleQuotedParser charsParser
 
--- | Parse a template value of a field of an object.
-tempVParser :: Parser Value
-tempVParser = TempV <$> templateParser
-
 -- | Parse an object value of a field of an object.
 objVParser :: Parser Value
 objVParser = ObjV <$> objectParser
@@ -130,7 +168,7 @@ strVParser = StrV <$> doubleQuotedParser charsParser
 -- | Parse a number value of a field of an object.
 numVParser :: Parser Value
 numVParser = do
-    dt <- float
+    dt <- decimal <|> float
     pure $ NumV dt
 
 -- | Parse a boolean value of a field of an object.
@@ -147,10 +185,14 @@ nullVParser :: Parser Value
 nullVParser =  nullTok
             *> pure NullV
 
+-- | Parse a `Value` or `Template`.
+valueTUParser :: Parser (TU Value)
+valueTUParser = StrT.parseTU templateParser valueParser
+
 -- | Parse an array value of a field of an object.
 arrayVParser :: Parser Value
 arrayVParser = do 
-    ary <- bracketsParser $ sepBy valueParser commaTok 
+    ary <- bracketsParser $ sepBy valueTUParser commaTok 
     pure $ ArrayV ary                             
 
 -- | Parse a field of an object.
@@ -158,7 +200,7 @@ fieldParser :: Parser Field
 fieldParser = do
     l <- fieldLabelParser
     skip colonTok
-    v <- valueParser
+    v <- valueTUParser
     pure $ (l,v)
 
 -- * Parser combinators
@@ -231,7 +273,7 @@ falseTok = tok "false"
 nullTok :: Parser Tok
 nullTok = tok "null"
 
- -- | Parse the colon token. Consumes whitespace after the parsed token.
+-- | Parse the colon token. Consumes whitespace after the parsed token.
 colonTok :: Parser Tok
 colonTok = tok ":"
 

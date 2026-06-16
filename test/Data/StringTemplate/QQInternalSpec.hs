@@ -3,7 +3,8 @@ module Data.StringTemplate.QQInternalSpec (spec) where
 
 import Test.Hspec
 
-import Data.StringTemplate
+import Data.StringTemplate.TemplateInternal
+import Data.StringTemplate.QQInternal
 
 testJSONChunk1 :: (Template,Template)
 testJSONChunk1 = ([template|this is a chunk|],chunk "this is a chunk")
