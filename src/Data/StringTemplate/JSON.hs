@@ -138,7 +138,7 @@ parseJSONTemplate (DT.stripStart->s)
 
 -- | Parse a JSON value
 valueParser :: Parser Value
-valueParser = objVParser
+valueParser =  objVParser
            <|> strVParser   
            <|> arrayVParser                              
            <|> numVParser
