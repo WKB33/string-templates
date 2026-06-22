@@ -7,7 +7,11 @@ Maintainer  : harley.eades@gmail.com
 
 String templates for JSON. The main use of this library is to test JSON
 encoders/decoders, but there could be more use cases. This API is designed with
-respect to [RFC 8259: STD 90: The JavaScript Object Notation (JSON) Data Interchange Format](https://www.rfc-editor.org/info/rfc8259/).
+respect to [RFC 8259: STD 90: The JavaScript Object Notation (JSON) Data
+Interchange Format](https://www.rfc-editor.org/info/rfc8259/).
+
+- We do not allow duplicate keys.
+- We require single quotes to be escaped due to templates.
 -}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -23,15 +27,14 @@ import Text.Megaparsec            (Parsec
                                   ,satisfy
                                   ,choice
                                   ,(<|>)
-                                  ,parse
                                   ,errorBundlePretty
                                   ,sepBy1
                                   ,sepBy
-                                  ,parseTest, MonadParsec (try), customFailure, ShowErrorComponent, unexpected)
+                                  ,MonadParsec (try), customFailure, ShowErrorComponent, unexpected, (<?>), ParsecT, runParserT)
 import Data.Text                  qualified as DT
 import Data.Void                  (Void)
 import Text.Megaparsec.Char       (string
-                                  ,space)
+                                  ,space, space1)
 import Data.Char                  (isPrint, isHexDigit, chr, generalCategory)
 import Text.Megaparsec.Char.Lexer (float
                                   ,decimal
@@ -49,6 +52,7 @@ import Data.StringTemplate.Parser qualified as StrT
 import Numeric (readHex)
 import Text.Megaparsec.Error (ShowErrorComponent(..), ErrorItem (..))
 import Data.List.NonEmpty (fromList)
+import Control.Monad.State (State, evalState, MonadTrans (..), MonadState (..))
 
 -- * JSON Syntax
 
@@ -132,45 +136,82 @@ jsonTemplate2QExp = flip (.) (parseJSONTemplate . DT.pack) $ \case {
 data JTParseError 
     = JTPEUnicode DT.Text
     | JTPEInvalidEscapeChar
+    | JTPEDuplicateField DT.Text
     deriving (Eq,Ord,Show)
 
 instance ShowErrorComponent JTParseError where
     showErrorComponent :: JTParseError -> String
-    showErrorComponent (JTPEUnicode s)       = DT.unpack s
-    showErrorComponent JTPEInvalidEscapeChar = "invalid escape character"
+    showErrorComponent (JTPEUnicode s)        = DT.unpack s
+    showErrorComponent JTPEInvalidEscapeChar  = "invalid escape character"
+    showErrorComponent (JTPEDuplicateField s) = "duplicate field: "<>(DT.unpack s)
 
 -- | Type of tokens.
 type Tok    = DT.Text
 -- | Type of parse errors.
 type ParseError = ParseErrorBundle Tok JTParseError
--- | Type of the parsers that operate on a stream of `Tok`.
-type Parser = Parsec JTParseError Tok
+-- | Type of the parsers that operate on a stream of `Tok`. The state holds onto
+-- which fields have been parsed when parsing an object.
+type Parser a = ParsecT JTParseError Tok (State [DT.Text]) a
+
+-- | Parse a string using the input parser.
+parse :: Parser a -> DT.Text -> Either ParseError a
+parse p s = evalState (runParserT p "" s) []
+
+-- | Test a parser on some input. Useful for testing parsers in GHCi.
+parseTest :: Show a => Parser a -> DT.Text -> IO ()
+parseTest p s = do
+    either 
+        (putStr . errorBundlePretty) 
+        print 
+    $ parse p s
 
 -- | The JSON parser.
 parseJSONTemplate 
     :: DT.Text -- ^ Text to parse
     -> Either DT.Text Value
 parseJSONTemplate (DT.stripStart->s) 
-    = case parse valueParser "" s of
+    = case parse valueParser s of
         Left bundle -> error $ errorBundlePretty bundle
         Right s -> Right s
- 
+
 -- | Parse a JSON value
 valueParser :: Parser Value
-valueParser =  objVParser
-           <|> strVParser   
-           <|> arrayVParser                              
-           <|> numVParser
-           <|> boolVParser
-           <|> nullVParser   
+valueParser =  do 
+    v <-       (objVParser   <?> "object")
+           <|> (strVParser   <?> "string")
+           <|> (arrayVParser <?> "array")                             
+           <|> (numVParser   <?> "number")
+           <|> (boolVParser  <?> "boolean")
+           <|> (nullVParser  <?> "null")
+    space
+    pure v
 
 -- | Parse an object.
 objectParser :: Parser [Field]
-objectParser = bracesParser fieldsParser
+objectParser = do 
+    -- Duplicate labels only affect the labels of the outer most object, and not
+    -- nested objects. Thus, we reset the set of existing labels when we start
+    -- parsing a new object.   
+    lift $ put [] 
+    bracesParser fieldsParser
 
 -- | Parse a list of fields found in an object.
 fieldsParser :: Parser [Field]
-fieldsParser =  sepBy1 fieldParser commaTok
+fieldsParser = sepBy1 fieldParser commaTok
+
+-- | Parse a field of an object.
+fieldParser :: Parser Field
+fieldParser = do
+    l <- fieldLabelParser
+    existingLabels <- get
+    -- Is `l` a duplicate field?
+    if l `elem` existingLabels
+    then customFailure $ JTPEDuplicateField l
+    else do skip colonTok
+            v <- valueTUParser
+            -- Add `l` to the set of existing labels.
+            put $ l:existingLabels
+            pure $ (l,v)
 
 -- | Parse a field label found in a field of an object.
 fieldLabelParser :: Parser DT.Text
@@ -217,16 +258,8 @@ valueTUParser = StrT.parseTU templateParser valueParser
 -- | Parse an array value of a field of an object.
 arrayVParser :: Parser Value
 arrayVParser = do 
-    ary <- bracketsParser $ sepBy valueTUParser commaTok 
-    pure $ ArrayV ary                             
-
--- | Parse a field of an object.
-fieldParser :: Parser Field
-fieldParser = do
-    l <- fieldLabelParser
-    skip colonTok
-    v <- valueTUParser
-    pure $ (l,v)
+    ary <- bracketsParser $ flip sepBy commaTok valueTUParser
+    pure $ ArrayV ary
 
 -- * Parser combinators
 templateParser :: Parser Template
@@ -254,11 +287,11 @@ bracketsParser = between (tok "[") (tok "]")
 
 -- | Parse an escape character. 
 -- These are one of
--- @[''\\'','"','\'']@
+-- @['\\','"','\'','b','n','f','r','t']@
 escapeParser :: Parser Char
 escapeParser = do
-    skipCount 1 backslashTok
-    try escapeCharParser
+    skip backslashTok
+    escapeCharParser
         <|> unicodeEscapeParser
 
 escapeCharParser :: Parser Char
@@ -280,6 +313,7 @@ escapeToChar 'r' = Just '\r'
 escapeToChar 't' = Just '\t'
 escapeToChar '\\' = Just '\\'
 escapeToChar '\'' = Just '\''
+escapeToChar '"'  = Just '"'
 escapeToChar _    = Nothing
 
 -- | Parse a unicode hex string of the form @uXXXX@ into the hex string
@@ -317,7 +351,7 @@ unicodeEscapeParser = do
 -- | Parse a single unicode character including escapes.
 charParser :: Parser Char
 charParser = choice [
-        satisfy (\c -> not (isEscapeChar c) && isPrint c),
+        satisfy (\c -> not (c `elem` ['\\','"','\'']) && isPrint c),
         escapeParser
     ]
 
