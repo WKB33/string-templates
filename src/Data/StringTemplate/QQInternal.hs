@@ -20,7 +20,6 @@ import Language.Haskell.TH        qualified as TH
 import Data.Text                  qualified as DT
 
 import Data.StringTemplate.TemplateInternal
-import Data.StringTemplate.Parser (parseTemplate)
 
 -- * Quasi-Quoter for Templates 
 
@@ -41,22 +40,21 @@ stringTemplate2QExp =  flip (.) (parseTemplate . DT.pack) $ \case {
         ;Left err -> fail $ DT.unpack err
     } 
 
+-- | Convert a `Hole` into a Template Haskell expression.
+hole2QExp :: Hole FillingExp -> Q Exp
+hole2QExp (i,Nothing)             = appCombinator1 (TH.mkName "hole")   (mkNaturalLit i)
+hole2QExp (i,Just (VarFilling v)) = appCombinator2 (TH.mkName "filled") (mkNaturalLit i) $ TH.varE . TH.mkName $ v
+hole2QExp (i,Just (LitFilling f)) = appCombinator2 (TH.mkName "filled") (mkNaturalLit i) $ TH.stringE . DT.unpack $ f
+
 -- | Convert an `ITemplate` into a Template Haskell expression.
-iTemplate2QExp :: ITemplate -> Q Exp
+iTemplate2QExp :: ITemplate FillingExp -> Q Exp
 iTemplate2QExp (IChunk chk) = do
     let chunk = TH.mkName "chunk"
     appCombinator1 chunk $ mkTextLit chk  
-iTemplate2QExp (ICompose p (h,Nothing) r) = do
+iTemplate2QExp (ICompose p h r) = do
     -- ICompose p h r = (chunk p) +> (hole h) +> r
     let pExp      = iTemplate2QExp (IChunk p)
-    let hExp      = appCombinator1 (TH.mkName "hole") (mkNaturalLit h)
-    let rExp      = iTemplate2QExp r
-    let compose   = appInfixCombinator (TH.mkName "+>")
-    (pExp `compose` hExp) `compose` rExp
-iTemplate2QExp (ICompose p (h,Just f) r) = do
-    -- ICompose p (h,f) r = (chunk p) +> (filled h f) +> r
-    let pExp      = iTemplate2QExp (IChunk p)
-    let hExp      = appCombinator2 (TH.mkName "filled") (mkNaturalLit h) (mkTextLit f)
+    let hExp      = hole2QExp h
     let rExp      = iTemplate2QExp r
     let compose   = appInfixCombinator (TH.mkName "+>")
     (pExp `compose` hExp) `compose` rExp
@@ -72,8 +70,8 @@ appInfixCombinator constName e1 e2 = TH.infixE (Just e1) (TH.varE constName) (Ju
 -- | Convert a type that can be converted into a template into a Template
 -- Haskell expression. Use this to create new quasi-quoters for types that
 -- convert to template.
-template2QExp :: ToTemplate a => a -> Q Exp
-template2QExp (toTemplate -> Template it _) = iTemplate2QExp it
+template2QExp :: TemplateExp -> Q Exp
+template2QExp (Template it _) = iTemplate2QExp it
 
 -- * Helpful Template Haskell combinators.
 

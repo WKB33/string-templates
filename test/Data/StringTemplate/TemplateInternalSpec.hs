@@ -18,16 +18,11 @@ import Data.Text             qualified as DT
 import Data.StringTemplate.TemplateInternal
 import Test.QuickCheck.StringTemplate
 
-prop_associativeCompose :: Template -> Template -> Template -> Property
+prop_associativeCompose :: Template () -> Template () -> Template () -> Property
 prop_associativeCompose t1 t2 t3 = property $ t1 +> (t2 +> t3) == (t1 +> t2) +> t3
 
-prop_identityCompose :: Template -> Property
+prop_identityCompose :: Template () -> Property
 prop_identityCompose t = property $ (t +> empty) == t && (empty +> t) == t
-
-prop_matchReflexivity :: FilledTemplate -> Property
-prop_matchReflexivity (FilledTemplate t) = property $ match t tx == Matched
-    where
-        tx = maybe DT.Empty id $ filledToText t
 
 -- Properties on HoleProps
 
@@ -39,6 +34,3 @@ spec = do
                 prop_associativeCompose
             prop "identity" $
                 prop_identityCompose
-        describe "match" $ do
-            prop "template preservation" 
-                prop_matchReflexivity

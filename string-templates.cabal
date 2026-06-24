@@ -25,7 +25,6 @@ library
       Data.StringTemplate.TemplateInternal
       Data.StringTemplate.QQInternal
       Data.StringTemplate.Text
-      Data.StringTemplate.Parser
       Data.StringTemplate.JSON
       Data.StringTemplate.JSONInternal
   other-modules:

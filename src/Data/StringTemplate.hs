@@ -24,8 +24,6 @@ module Data.StringTemplate (-- * Templates
                            ,pattern Chunk
                            ,pattern Compose
                            ,Hole
-                           -- ** Typeclass 
-                           ,ToTemplate(..)
                             -- ** Template Combinators
                            ,hole
                            ,filled
@@ -48,10 +46,8 @@ module Data.StringTemplate (-- * Templates
                            ,plugAll
                            -- ** Equality and Matching
                            ,(==>)
-                           ,match
                            -- ** Converting from Templates
                            ,chunkToText
-                           ,filledToText
                            -- * Quasi-Quoter for Templates
                            ,template
                            ,stringTemplate2QExp

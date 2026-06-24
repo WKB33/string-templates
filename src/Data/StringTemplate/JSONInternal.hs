@@ -30,12 +30,13 @@ import Text.Megaparsec            (Parsec
                                   ,errorBundlePretty
                                   ,sepBy1
                                   ,sepBy
-                                  ,MonadParsec (try), customFailure, ShowErrorComponent, unexpected, (<?>), ParsecT, runParserT)
+                                  ,MonadParsec (try, eof, lookAhead), customFailure, ShowErrorComponent, unexpected, (<?>), ParsecT, runParserT, count, takeWhileP)
+import Data.Text                  (Text)
 import Data.Text                  qualified as DT
 import Data.Void                  (Void)
 import Text.Megaparsec.Char       (string
                                   ,space, space1)
-import Data.Char                  (isPrint, isHexDigit, chr, generalCategory)
+import Data.Char                  (isPrint, isHexDigit, chr, generalCategory, isDigit)
 import Text.Megaparsec.Char.Lexer (float
                                   ,decimal
                                   ,symbol, signed)
@@ -45,40 +46,33 @@ import Language.Haskell.TH.Quote  qualified as TH
 import Data.StringTemplate        ((+>)
                                   ,chunk
                                   ,Template
-                                  ,ToTemplate(..)
                                   ,TU(..)) 
-import Data.StringTemplate        qualified as StrT
-import Data.StringTemplate.Parser qualified as StrT
+import Data.StringTemplate.TemplateInternal qualified as StrT
+import Data.StringTemplate.Text             qualified as StrT
+import Data.StringTemplate.QQInternal       qualified as StrT
 import Numeric (readHex)
 import Text.Megaparsec.Error (ShowErrorComponent(..), ErrorItem (..))
 import Data.List.NonEmpty (fromList)
 import Control.Monad.State (State, evalState, MonadTrans (..), MonadState (..))
+import Data.StringTemplate.TemplateInternal (TemplateExp, FillingExp, ToTemplateExp (..))
 
 -- * JSON Syntax
 
 -- | Type of fields of a JSON object.
-type Field = (DT.Text,TU Value)
+type Field = (DT.Text,TU FillingExp Value)
 
 -- | JSON Value
 data Value 
     = ObjV   [Field]    -- ^ Object
-    | ArrayV [TU Value] -- ^ Array
+    | ArrayV [TU FillingExp Value] -- ^ Array
     | StrV   DT.Text    -- ^ String    
     | NumV   Double     -- ^ Number
     | BoolV  Bool       -- ^ Boolean
     | NullV             -- ^ Null
     deriving (Show, Eq)
 
-instance ToTemplate Value where
-    toTemplate :: Value -> Template
-    toTemplate = value
-
-instance ToTemplate Field where
-    toTemplate :: Field -> Template
-    toTemplate = field
-
 -- | Create a template for a JSON value.
-value :: Value -> Template
+value :: Value -> TemplateExp
 value (ObjV   obj)   = object obj
 value (ArrayV ary)   = array ary
 value (StrV   s)     = chunk $ StrT.doubleQuote s
@@ -87,26 +81,34 @@ value (BoolV  True)  = chunk "true"
 value (BoolV  False) = chunk "false"
 value NullV          = chunk "null"
 
+instance ToTemplateExp Value where
+    toTemplateExp :: Value -> TemplateExp
+    toTemplateExp = value
+
+instance ToTemplateExp Field where
+    toTemplateExp :: Field -> TemplateExp
+    toTemplateExp = field
+
 -- * Creating JSON templates
 
 -- | Create a template from a JSON object.
 object :: [Field] -- ^ List of fields of the object
-       -> Template
+       -> TemplateExp
 object fields = StrT.betweenTemplate (chunk "{") (chunk "}") $ StrT.sepTemplatesBy (chunk ",") fields
 
 --- | Create a template of a field of an object.
 field :: Field -- ^ Field of the object
-      -> Template
-field (DT.show -> label,value) = fieldLabel label +> toTemplate value
+      -> TemplateExp
+field (label,value) = fieldLabel label +> toTemplateExp value
 
 -- | Create a template of a field label of a field of an object.
 fieldLabel :: DT.Text -- ^ Label of the field
-           -> Template
+           -> TemplateExp
 fieldLabel = chunk . (<> ":") . StrT.doubleQuote
 
 -- | Create a template of an array value.
-array :: [TU Value] -- ^ List of values of the array
-      -> Template
+array :: [TU FillingExp Value] -- ^ List of values of the array
+      -> TemplateExp
 array = StrT.bracketTemplate . StrT.sepTemplatesBy (chunk ",")
 
 -- * Quasi-quoter for JSON templates
@@ -126,7 +128,7 @@ jsonTemplate = TH.QuasiQuoter {
 jsonTemplate2QExp :: String
                   -> TH.Q TH.Exp
 jsonTemplate2QExp = flip (.) (parseJSONTemplate . DT.pack) $ \case {
-         Right v  -> StrT.template2QExp v
+         Right v  -> StrT.template2QExp . toTemplateExp $ v
         ;Left err -> fail $ DT.unpack err
     } 
 
@@ -137,6 +139,7 @@ data JTParseError
     = JTPEUnicode DT.Text
     | JTPEInvalidEscapeChar
     | JTPEDuplicateField DT.Text
+    | JTPELeadingZeros
     deriving (Eq,Ord,Show)
 
 instance ShowErrorComponent JTParseError where
@@ -144,6 +147,7 @@ instance ShowErrorComponent JTParseError where
     showErrorComponent (JTPEUnicode s)        = DT.unpack s
     showErrorComponent JTPEInvalidEscapeChar  = "invalid escape character"
     showErrorComponent (JTPEDuplicateField s) = "duplicate field: "<>(DT.unpack s)
+    showErrorComponent JTPELeadingZeros       = "invalid number: leading zeros are not allowed"
 
 -- | Type of tokens.
 type Tok    = DT.Text
@@ -165,6 +169,11 @@ parseTest p s = do
         print 
     $ parse p s
 
+parseTestFile :: Show a => Parser a -> FilePath -> IO ()
+parseTestFile p file = do
+    f <- readFile file
+    parseTest p (DT.pack f)
+
 -- | The JSON parser.
 parseJSONTemplate 
     :: DT.Text -- ^ Text to parse
@@ -173,6 +182,13 @@ parseJSONTemplate (DT.stripStart->s)
     = case parse valueParser s of
         Left bundle -> error $ errorBundlePretty bundle
         Right s -> Right s
+
+jsonParser :: Parser Value
+jsonParser = do
+    space
+    v <- valueParser
+    eof
+    pure v
 
 -- | Parse a JSON value
 valueParser :: Parser Value
@@ -197,7 +213,7 @@ objectParser = do
 
 -- | Parse a list of fields found in an object.
 fieldsParser :: Parser [Field]
-fieldsParser = sepBy1 fieldParser commaTok
+fieldsParser = sepBy fieldParser commaTok
 
 -- | Parse a field of an object.
 fieldParser :: Parser Field
@@ -228,8 +244,14 @@ strVParser = StrV <$> doubleQuotedParser charsParser
 -- | Parse a number value of a field of an object.
 numVParser :: Parser Value
 numVParser = do
+    -- Try to lookahead up until any decimal point, then we can check for
+    -- leading zeros.
+    c <- try $ lookAhead $ takeWhileP Nothing isDigit
     dt <- try signedFloat <|> signedDecimal
-    pure $ NumV dt
+    case c of 
+        -- Check for leading zeros.
+        ('0' DT.:< d DT.:< _) | isDigit d -> customFailure JTPELeadingZeros
+        _ -> pure $ NumV dt
     where
         signedDecimal :: Parser Double
         signedDecimal = signed space decimal
@@ -252,7 +274,7 @@ nullVParser =  nullTok
             *> pure NullV
 
 -- | Parse a `Value` or `Template`.
-valueTUParser :: Parser (TU Value)
+valueTUParser :: Parser (TU FillingExp Value)
 valueTUParser = StrT.parseTU templateParser valueParser
 
 -- | Parse an array value of a field of an object.
@@ -262,7 +284,7 @@ arrayVParser = do
     pure $ ArrayV ary
 
 -- * Parser combinators
-templateParser :: Parser Template
+templateParser :: Parser TemplateExp
 templateParser = do
     s <- singleQuotedParser charsParser
     case StrT.parseTemplate s of
@@ -287,7 +309,7 @@ bracketsParser = between (tok "[") (tok "]")
 
 -- | Parse an escape character. 
 -- These are one of
--- @['\\','"','\'','b','n','f','r','t']@
+-- @['\\','/','"','\'','b','n','f','r','t']@
 escapeParser :: Parser Char
 escapeParser = do
     skip backslashTok
@@ -303,7 +325,7 @@ escapeCharParser = do
 
 -- | Predicate defining JSON escape characters.
 isEscapeChar :: Char -> Bool
-isEscapeChar = (`elem` ['\\','"','\'','b','n','f','r','t'])
+isEscapeChar = (`elem` ['/','\\','"','\'','b','n','f','r','t'])
 
 escapeToChar :: Char -> Maybe Char
 escapeToChar 'b' = Just '\b'
@@ -312,6 +334,7 @@ escapeToChar 'f' = Just '\f'
 escapeToChar 'r' = Just '\r'
 escapeToChar 't' = Just '\t'
 escapeToChar '\\' = Just '\\'
+escapeToChar '/' = Just '/'
 escapeToChar '\'' = Just '\''
 escapeToChar '"'  = Just '"'
 escapeToChar _    = Nothing
