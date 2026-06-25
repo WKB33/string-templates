@@ -356,6 +356,10 @@ plugAll _ _ = Nothing
 
 -- * Template Expressions
 
+-- | A intermediate expression language for template strings where expressions
+-- (`FillingExp`) fill their holes.
+type TemplateExp = Template FillingExp
+
 -- | Template Union of types. Use this to add string templates to various
 -- locations within some structure data.
 data TU a = StrTU (Template FillingExp) | LitTU a
@@ -402,10 +406,6 @@ literialFexp = LitFilling . toFilling
 showASTFilling :: FillingExp -> Text
 showASTFilling (LitFilling s) = "LitFilling "<>DT.show s
 showASTFilling (VarFilling v) = "VarFilling "<>DT.show v
-
--- | A intermediate expression language for template strings where expressions
--- (`FillingExp`) fill their holes.
-type TemplateExp = Template FillingExp
 
 -- | Translates a list into a template list where each template in the input
 -- list is separated by the input template.
