@@ -2,44 +2,43 @@
 module Data.StringTemplate.QQInternalSpec (spec) where
 
 import Test.Hspec
-import Data.Functor.Identity                 (Identity)
 import Data.StringTemplate.TemplateInternal
 import Data.StringTemplate.QQInternal
 
-testJSONChunk1 :: (Template Identity (),Template Identity ())
+testJSONChunk1 :: (Template (),Template ())
 testJSONChunk1 = ([template|this is a chunk|],chunk "this is a chunk")
 
-testJSONChunk2 :: (Template Identity (),Template Identity ())
+testJSONChunk2 :: (Template (),Template ())
 testJSONChunk2 = ([template| |],Template (IChunk " ") ([],0,[],0))
 
-testJSONChunk3 :: (Template Identity (),Template Identity ())
+testJSONChunk3 :: (Template (),Template ())
 testJSONChunk3 = ([template|😩|],Template (IChunk "😩") ([],0,[],0))
 
-testHole1 :: (Template Identity (),Template Identity ())
-testHole1 = ([template|$1{}$2{}$3{}|],Template (ICompose "" (1, EmptyHole) (ICompose "" (2, EmptyHole) (ICompose "" (3, EmptyHole) (IChunk "")))) ([1,2,3],3,[],0))
+testHole1 :: (Template (),Template ())
+testHole1 = ([template|$1{}$2{}$3{}|],Template (ICompose "" (EmptyHole 1) (ICompose "" (EmptyHole 2) (ICompose "" (EmptyHole 3) (IChunk "")))) ([1,2,3],3,[],0))
 
-testHole2 :: (Template Identity (),Template Identity ())
-testHole2 = ([template|$1{}$2{}-$3{}|],Template (ICompose "" (1, EmptyHole) (ICompose "" (2, EmptyHole) (ICompose "-" (3, EmptyHole) (IChunk "")))) ([1,2,3],3,[],0))
+testHole2 :: (Template (),Template ())
+testHole2 = ([template|$1{}$2{}-$3{}|],Template (ICompose "" (EmptyHole 1) (ICompose "" (EmptyHole 2) (ICompose "-" (EmptyHole 3) (IChunk "")))) ([1,2,3],3,[],0))
 
-testHole3 :: (Template Identity (),Template Identity ())
-testHole3 = ([template|this $1{} and $2{} is $1{}|],Template (ICompose "this " (1, EmptyHole) (ICompose " and " (2, EmptyHole) (ICompose " is " (1, EmptyHole) (IChunk "")))) ([1,2],2,[],0))
+testHole3 :: (Template (),Template ())
+testHole3 = ([template|this $1{} and $2{} is $1{}|],Template (ICompose "this " (EmptyHole 1) (ICompose " and " (EmptyHole 2) (ICompose " is " (EmptyHole 1) (IChunk "")))) ([1,2],2,[],0))
 
-testHole4 :: (Template Identity (),Template Identity ())
-testHole4 = ([template|Hi $1{}!|], Template (ICompose "Hi " (1, EmptyHole) (IChunk "!")) ([1],1,[],0))
+testHole4 :: (Template (),Template ())
+testHole4 = ([template|Hi $1{}!|], Template (ICompose "Hi " (EmptyHole 1) (IChunk "!")) ([1],1,[],0))
 
-testHole5 :: (Template Identity (),Template Identity ())
-testHole5 = ([template|Hi ❤️, $1{} ‼|], Template (ICompose "Hi ❤️, " (1, EmptyHole) (IChunk " ‼")) ([1],1,[],0))
+testHole5 :: (Template (),Template ())
+testHole5 = ([template|Hi ❤️, $1{} ‼|], Template (ICompose "Hi ❤️, " (EmptyHole 1) (IChunk " ‼")) ([1],1,[],0))
 
-testJSONHole1 :: (Template Identity (),Template Identity ())
+testJSONHole1 :: (Template (),Template ())
 testJSONHole1 = ([template|
 {
     "forename": "$1{}", 
     "surname": "$2{}"
 }
-|],Template (ICompose "\n{\n    \"forename\": \"" ((1, EmptyHole)) (ICompose "\", \n    \"surname\": \"" ((2, EmptyHole)) (IChunk "\"\n}\n"))) ([1,2],2,[],0))
+|],Template (ICompose "\n{\n    \"forename\": \"" ((EmptyHole 1)) (ICompose "\", \n    \"surname\": \"" ((EmptyHole 2)) (IChunk "\"\n}\n"))) ([1,2],2,[],0))
 
-testJSONHole2 :: (Template Identity (),Template Identity ())
-testJSONHole2 = ([template|{"forename":"$1{}","surname":"$2{}"}|],Template (ICompose "{\"forename\":\"" ((1, EmptyHole)) (ICompose "\",\"surname\":\"" ((2, EmptyHole)) (IChunk "\"}"))) ([1,2],2,[],0))
+testJSONHole2 :: (Template (),Template ())
+testJSONHole2 = ([template|{"forename":"$1{}","surname":"$2{}"}|],Template (ICompose "{\"forename\":\"" (EmptyHole 1) (ICompose "\",\"surname\":\"" ((EmptyHole 2)) (IChunk "\"}"))) ([1,2],2,[],0))
 
 spec :: Spec 
 spec = do
