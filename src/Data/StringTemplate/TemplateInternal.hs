@@ -28,7 +28,6 @@ module Data.StringTemplate.TemplateInternal where
 
 import Data.Text (Text)
 import Data.Text qualified as DT
-import GHC.Natural (Natural)
 import Text.Megaparsec                      (Parsec
                                             ,between
                                             ,skipCount
@@ -41,7 +40,7 @@ import Text.Megaparsec                      (Parsec
                                             ,parse
                                             ,errorBundlePretty
                                             ,MonadParsec (try, takeWhile1P)
-                                            ,(<|>), ShowErrorComponent (..), lookAhead, customFailure)
+                                            ,(<|>), ShowErrorComponent (..), lookAhead, customFailure)                                    
 import Data.Char                            qualified as DT
 import Text.Megaparsec.Char                 (char
                                             ,digitChar, space, string)
@@ -53,44 +52,63 @@ import Data.List               (union
                                ,delete)
 import Control.Applicative     (Alternative)
 import Data.String (IsString (..))
+import qualified Data.IntMap as M
+import Data.IntMap (IntMap, (!?))
 
-type Hole f = (Natural, Maybe f)
+type Hole f      = (Int,HoleProps f)
+type HoleProps f = ([Int],IntMap f)
 
-pattern EmptyHole :: Natural -> Hole f
-pattern EmptyHole i <- (id -> (i,Nothing)) where
-    EmptyHole i = (i,Nothing)
+pattern EmptyHole :: Int -> HoleProps f -> Hole f
+pattern EmptyHole i hlsProps <- (decomposeEmptyHole -> Just (i,hlsProps))
 
-pattern FilledHole :: Natural -> f -> Hole f
-pattern FilledHole i f <- (id -> (i,Just f)) where
-    FilledHole i f = (i,Just f)
+pattern FilledHole :: Int -> f -> HoleProps f -> Hole f
+pattern FilledHole i f hlsProps <- (decomposeFilledHole -> Just (i,Just f,hlsProps))
 
-{-# COMPLETE EmptyHole, FilledHole #-}
+pattern UndefHole :: Int -> HoleProps f -> Hole f
+pattern UndefHole i hlsProps <- (decomposeUndefHole -> Just (i,hlsProps))
 
-class HoleFiller a where
-    toFilling :: a -> Text
+decomposeEmptyHole :: (Int, HoleProps f) -> Maybe (Int, HoleProps f)
+decomposeEmptyHole h@(i,hlsProps) | emptyHole i hlsProps = Just h
+                                  | otherwise = Nothing
 
-instance HoleFiller Text where
-    toFilling :: Text -> Text
-    toFilling = id
+decomposeFilledHole :: Hole f -> Maybe (Int, Maybe f, ([Int], IntMap f))
+decomposeFilledHole (i,hlsProps@(_,fhls)) | filledHole i hlsProps = Just (i,fhls !? i,hlsProps)
+                                          | otherwise             = Nothing
+
+decomposeUndefHole :: Hole f -> Maybe (Hole f)
+decomposeUndefHole h | isNothing (decomposeEmptyHole h) && isNothing (decomposeFilledHole h) = Just h
+                     | otherwise = Nothing
+
+{-# COMPLETE EmptyHole, FilledHole, UndefHole #-}
+
+emptyHole :: Int -> HoleProps f -> Bool
+emptyHole i (hls,fhls) = i `elem` hls && not (i `elem` M.keys fhls)
+
+filledHole :: Int -> HoleProps f -> Bool
+filledHole i (hls,fhls) = not (i `elem` hls) && i `elem` M.keys fhls
+
+emptyHoleProps :: HoleProps f
+emptyHoleProps = ([], M.empty)
 
 -- | Internal templates are the underlying structure of `Template`.
-data ITemplate f where
-    IChunk   :: Text -> ITemplate f
-    ICompose :: Text -> Hole f -> ITemplate f -> ITemplate f
-
-instance Show f => Show (ITemplate f) where
-    show :: ITemplate f -> String    
-    show (IChunk t)                     = DT.unpack t    
-    show (ICompose   prefix (i,h) rest) = DT.unpack prefix <> "$" <> show i <> "{"
-                                          <> maybe "" show h
-                                          <> "}" <> show rest
+data ITemplate where
+    IChunk   :: Text -> ITemplate 
+    ICompose :: Text -> Int -> ITemplate -> ITemplate
 
 -- | A template with pluggable holes. We do not expose the underlying
 -- constructor in favor of the combinators.
 data Template f where
-    Template :: ITemplate f                      -- ^ Internal template
-             -> ([Natural],Natural,[Natural],Natural) -- ^ Unfilled hole indices, number of unfilled holes, filled hole indices, and number of filled holes
+    Template :: ITemplate         -- ^ Internal template
+             -> HoleProps f       -- ^ Empty holes and hole-filling map
              -> Template f
+
+instance Show f => Show (Template f) where
+    show :: Template f -> String    
+    show (Template (IChunk t) _) = DT.unpack t    
+    show (Template (ICompose prefix i rest) (emptyHoles, filledHoles))
+        = DT.unpack prefix <> "$" <> show i <> "{"
+                           <> (if i `elem` emptyHoles then "" else (show $ filledHoles M.! i))
+                           <> "}" <> show (Template rest (emptyHoles, filledHoles))
 
 -- * Combinators
 
@@ -99,52 +117,53 @@ pattern Empty :: Template f
 pattern Empty <- (null -> True) where
     Empty = empty
 
+isChunk :: Template f -> Maybe Text
+isChunk (Template (IChunk s) ([],m)) | M.null m = Just s
+isChunk _ = Nothing
+
 -- | Pattern synonym for template chunk's.
 pattern Chunk :: Text -> Template f
-pattern Chunk s <- (Template (IChunk s) ([],0,[],0))
+pattern Chunk s <- (isChunk -> Just s)
     where
         Chunk = chunk
 
 -- | Pattern synonym for the composition of templates.
-pattern Compose :: Text -> (Natural,Maybe f) -> Template f -> Template f
+pattern Compose :: Text -> (Int,Maybe f) -> Template f -> Template f
 pattern Compose c h t <- (decompose -> Just (c, h, t))
     where
-        Compose = (compose)
+        Compose = compose
 
 {-# COMPLETE Chunk, Compose #-}
 
 -- | Explicitly create a top-level composition template.
 compose :: Text             -- ^ Prefix chunk
-        -> (Natural,Maybe f) -- ^ Hole index and potential filling
-        -> Template f  -- ^ Template branch
+        -> (Int,Maybe f)           
+        -> Template f       -- ^ Template branch
         -> Template f
-compose c (EmptyHole i)    t = chunk c +> hole i     +> t
-compose c (FilledHole i f) t = chunk c +> filled i f +> t
+compose c (i, Nothing) t = chunk c +> hole i     +> t
+compose c (i, Just f)  t = chunk c +> filled i f +> t
 
 -- | Decompose a template into the top-level compose.
-decompose :: Template f -> Maybe (Text, (Natural, Maybe f), Template f)
-decompose (Template (ICompose c h@(EmptyHole i)     t') (uh,nuh,fh,nfh)) = Just (c, h, (Template t' (i `delete` uh,nuh-1,fh,nfh)))
-decompose (Template (ICompose c h@(FilledHole i _)  t') (uh,nuh,fh,nfh)) = Just (c, h, (Template t' (uh,nuh,i  `delete` fh,nfh-1)))
+decompose :: Template f -> Maybe (Text, (Int,Maybe f), Template f)
+decompose (Template (ICompose c i t') hlsProps) =     
+     case (i,hlsProps) of
+        (EmptyHole _ (uh,fh))    -> Just (c, (i,Nothing), Template t' (i `delete` uh,fh))
+        (FilledHole _ f (uh,fh)) -> Just (c, (i,Just f),  Template t' (uh,i `M.delete` fh))
+        (UndefHole  _ _)         -> Nothing
 decompose _ = Nothing
 
 -- | Test to see if a template is empty.
 null :: Template f -> Bool
-null (Template (IChunk "") ([],0,[],0)) = True
+null (Template (IChunk "") ([],m)) | M.null m = True
 null _ = False
 
-instance Show f => Show (Template f) where
-    show :: Template f -> String
-    show (Template t _) = show t
-
--- | Equality of `ITemplates`. The contents of filled holes are included in the
--- decision.
-(>==>) :: Eq f 
-       => ITemplate f
-       -> ITemplate f
+-- | Equality of `ITemplates`. Hole indices are not included in the decision.
+(>==>) :: ITemplate
+       -> ITemplate
        -> Bool
-(IChunk chk1)               >==> (IChunk chk2)               = chk1 == chk2
-(ICompose   chk1 (_,c1) r1) >==> (ICompose   chk2 (_,c2) r2) = chk1 == chk2 && c1 == c2 && r1 >==> r2
-_                           >==> _                           = False
+(IChunk chk1)          >==> (IChunk chk2)          = chk1 == chk2
+(ICompose   chk1 _ r1) >==> (ICompose   chk2 _ r2) = chk1 == chk2 && r1 >==> r2
+_                      >==> _                      = False
 
 instance Eq f => Eq (Template f) where
     (==) :: Template f -> Template f -> Bool
@@ -157,45 +176,43 @@ instance Eq f => Eq (Template f) where
       => Template f
       -> Template f
       -> Bool
-(Template t1 _) ==> (Template t2 _) = t1 >==> t2    
+(Template t1 (_,fhMap1)) ==> (Template t2 (_,fhMap2)) = t1 >==> t2 && fhMap1 == fhMap2
 
 -- | An empty hole.
-hole :: Natural -- ^ Hole index
+hole :: Int -- ^ Hole index
      -> Template f
-hole i = flip Template ([i],1,[],0) $ ICompose "" (EmptyHole i) (IChunk "")
+hole i = flip Template ([i],M.empty) $ ICompose "" i (IChunk "")
 
--- | A holeilled with a concrete value. Throws a runtime exception if the
--- input string does not parse as a valid literal filling based on
--- `parseLitFilling`.
-filled :: Natural    -- ^ Hole index
-       -> f          -- ^ Hole filling
+-- | A hole filled with a value. 
+filled :: Int    -- ^ Hole index
+       -> f      -- ^ Hole filling
        -> Template f
 filled i f 
-    = flip Template ([],0,[i],1) $ (ICompose "" (FilledHole i f) (IChunk ""))
+    = flip Template ([],M.singleton i f) $ (ICompose "" i (IChunk ""))
 
 -- | A chunk is a substring to a larger string.
 chunk :: Text -- ^ Substring.
       -> Template f
-chunk = flip Template ([],0,[],0) .  IChunk
+chunk = flip Template ([],M.empty) .  IChunk
 
 -- | The empty template corresponds to the empty string.
 empty :: Template f
 empty = chunk ""
 
 -- | Composition of `ITemplates`.
-(>+>) :: ITemplate f
-      -> ITemplate f
-      -> ITemplate f
+(>+>) :: ITemplate 
+      -> ITemplate 
+      -> ITemplate 
 (IChunk chk1)    >+> (IChunk chk2)    = IChunk $ chk1 <> chk2
 (IChunk chk)     >+> (ICompose p h r) = ICompose (chk <> p) h r
-(ICompose p h r) >+> t                = (ICompose p h $ r >+> t) 
+(ICompose p h r) >+> t                = ICompose p h $ r >+> t
 
 -- | Composition of templates.
 (+>) :: Template f
      -> Template f
      -> Template f
-(Template t1 (ufhs1,m1,fhs1,n1)) +> (Template t2 (ufhs2,m2,fhs2,n2)) 
-    = Template (t1 >+> t2) (ufhs1 `union` ufhs2,m1 + m2,fhs1 `union` fhs2,n1 + n2) 
+(Template t1 (ufhs1,fhs1)) +> (Template t2 (ufhs2,fhs2)) 
+    = Template (t1 >+> t2) (ufhs1 `union` ufhs2,fhs1 `M.union` fhs2) 
 
 instance Semigroup (Template f) where
     (<>) :: Template f -> Template f -> Template f
@@ -210,9 +227,7 @@ instance Monoid (Template f) where
 
 instance Functor Template where
     fmap :: (a -> b) -> Template a -> Template b
-    fmap _ (Chunk t) = Chunk t
-    fmap f (Compose p (EmptyHole i)    r) = Compose p (EmptyHole i) $ fmap f r
-    fmap f (Compose p (FilledHole i h) r) = Compose p (FilledHole i . f $ h) $ fmap f r
+    fmap f (Template t (hls,fhls)) = Template t $ (hls,M.map f fhls)
 
 instance IsString (Template f) where
     fromString :: String -> Template f
@@ -222,37 +237,36 @@ instance IsString (Template f) where
 -- is set to pretty print, but for debugging it is sometimes useful to see the
 -- raw AST.
 showAST :: Show f => Template f -> Text
-showAST (Template (IChunk x) _)                          = "IChunk "   <> (DT.show x)
-showAST (Template (ICompose p (EmptyHole h)     r) hls) = "ICompose " <> (DT.show p) <> " " <> (DT.show h) <> " (" <> (showAST (Template r hls)) <> ")"
-showAST (Template (ICompose p (FilledHole h c)  r) hls) = "ICompose " <> (DT.show p) <> " " <> (DT.show h) <> " (" <> (DT.show c) <> ") (" <> (showAST (Template r hls)) <> ")"
+showAST (Template (IChunk x) _)                  = "IChunk "   <> (DT.show x)
+showAST (Template (ICompose p i r) hls@(_,fhls)) = "ICompose " <> (DT.show p) <> " " <> (DT.show i) <> " (" <> (DT.show $ fhls M.!? i) <> ") (" <> (showAST (Template r hls)) <> ")"
 
 -- | Get the list of unfilled-hole indices present in a template.
 -- Time complexity: @O(0)@
 unfilledHoles :: Template f -- ^ Template 
-              -> [Natural]
-unfilledHoles (Template _ (hls,_,_,_)) = hls
+              -> [Int]
+unfilledHoles (Template _ (hls,_)) = hls
+
 
 -- | Get the list of filled-hole indices present in a template.
--- Time complexity: @O(0)@
+-- Time complexity: @O(n)@
 filledHoles :: Template f -- ^ Template 
-            -> [Natural]
-filledHoles (Template _ (_,_,fhls,_)) = fhls
+            -> [Int]
+filledHoles (Template _ (_,fhls)) = M.keys fhls
 
 -- | Get the number of unfilled holes in a template.
--- Time complexity: @O(0)@
+-- Time complexity: @O(n)@
 numberOfUnfilledHoles :: Template f -- ^ Template 
-                      -> Natural
-numberOfUnfilledHoles (Template _ (_,m,_,_)) = m
+                      -> Int
+numberOfUnfilledHoles (Template _ (hls,_)) = length hls
 
 -- | Get the number of filled holes in a template.
--- Time complexity: @O(0)@
+-- Time complexity: @O(n)@
 numberOfFilledHoles :: Template f -- ^ Template 
-                    -> Natural
-numberOfFilledHoles (Template _ (_,_,_,n)) = n
-
+                    -> Int
+numberOfFilledHoles (Template _ (_,fhls)) = M.size fhls
 
 -- | Decide if a template is filled or not. 
--- Time complexity: \(\mathcal{O}(1)\)
+-- Time complexity: \(\mathcal{O}(n)\)
 isFilled :: Template f -> Bool
 isFilled t = numberOfUnfilledHoles t == 0
 
@@ -260,56 +274,58 @@ isFilled t = numberOfUnfilledHoles t == 0
 -- Time complexity: @O(0)@
 chunkToText :: Template f     
             -> Maybe Text
-chunkToText (Template (IChunk c) ([],0,[],0)) = Just c
-chunkToText _                                = Nothing
+chunkToText (Template (IChunk c) ([],fhls)) | M.null fhls = Just c
+chunkToText _                                             = Nothing
 
--- | Fill a hole with a text. Returns @Nothing@ if the hole index doesn't exist.
--- Filling a hole doesn't replace the hole, but simply puts the input text
--- inside the hole. 
-fillHoleI :: ITemplate f
-          -> Natural     -- ^ Hole index to plug
-          -> f           -- ^ Hole filling
-          -> Maybe (ITemplate f)
-fillHoleI (ICompose p (h,_) t) i c | h == i = do
-    t' <- fillHoleI t i c
-    Just $ ICompose p (FilledHole h c) t'
-fillHoleI (ICompose p hl t) i c = do
-    t' <- fillHoleI t i c
-    Just $ ICompose p hl t'
-fillHoleI _ _ _ = Nothing
-
--- | Fill a hole with a text. Returns @Nothing@ if the hole index doesn't exist.
--- Filling a hole doesn't replace the hole, but simply puts the input text
--- inside the hole.
+-- | Like `fillHole`, but doesn't update an already filled hole's value.
 placeInHole :: Template f
-            -> Natural     -- ^ Hole index to plug
-            -> f           -- ^ Holeilling
+            -> Int     -- ^ Hole index to plug
+            -> f       -- ^ Holeilling
             -> Maybe (Template f)
-placeInHole (Template t@(ICompose _ _ _) st@(hls,m,fhls,n)) i c | i `elem` hls || i `elem` fhls = do 
-    t' <- fillHoleI t i c
-    if i `elem` hls
-    then Just $ Template t' (i `delete` hls,m - 1,i:fhls,n + 1)
-    else if i `elem` fhls
-         then Just $ Template t' st
-         else Nothing
-placeInHole _ _ _ = Nothing
+placeInHole t@(Template it hlsProps) i c =
+    case (i,hlsProps) of
+        EmptyHole  _   (hls,fhls) -> Just $ Template it $ (i `delete` hls,M.insert i c fhls)
+        FilledHole _ _ _          -> Just $ t
+        UndefHole  _   _          -> Nothing
+
+-- | Fill a hole with a text. If the hole is already filled, then the filling is
+-- updated with the new value. Filling a hole doesn't replace the hole, but
+-- simply puts the input text inside the hole. Returns @Nothing@ if the hole
+-- doesn't exist.
+fillHole :: Template f
+             -> Int     -- ^ Hole index to plug
+             -> f       -- ^ Holeilling
+             -> Maybe (Template f)
+fillHole (Template t hlsProps) i c = 
+    case (i,hlsProps) of
+        EmptyHole  _   (hls,fhls) -> Just $ Template t (i `delete` hls,M.insert i c fhls)
+        FilledHole _ _ (hls,fhls) -> Just $ Template t (hls,M.insert i c fhls)
+        UndefHole  _   _          -> Nothing
+
+class HoleFiller a where
+    toFilling :: a -> Text
+
+instance HoleFiller Text where
+    toFilling :: Text -> Text
+    toFilling = id
 
 -- | Plug an unfilled hole in a template with some text. Returns @Nothing@ when
 -- the hole index doesn't exist in the template or is filled, otherwise returns
 -- a template with the hole plugged. Plugging a hole replaces the hole with the
 -- value unlike `fillHole`.
 plugHoleI :: HoleFiller f 
-          => ITemplate f
-          -> Natural   -- ^ Hole index to plug
-          -> f         -- ^ Text to replace hole
-          -> Maybe (ITemplate f)
-plugHoleI (ICompose p (h,f) (IChunk s)) i c 
-    | i == h && isNothing f = Just $ IChunk $ p <> toFilling c <> s
-plugHoleI (ICompose p hl@(h,f) r@(ICompose p' h' s))  i c 
-    | i == h && isNothing f = Just $ ICompose (p <> toFilling c <> p') h' s
-    | otherwise = do r' <- plugHoleI r i c
-                     Just $ ICompose p hl r'
-plugHoleI _ _ _ = Nothing       
+          => ITemplate
+          -> [Int]               -- ^ List of unfilled holes
+          -> Int                 -- ^ Hole index to plug
+          -> f                   -- ^ Text to replace hole
+          -> Maybe ITemplate
+plugHoleI (ICompose p h (IChunk s)) hls i c 
+    | i == h && h `elem` hls = Just $ IChunk $ p <> toFilling c <> s
+plugHoleI (ICompose p h r@(ICompose p' h' s)) hls i c 
+    | i == h && h `elem` hls = Just $ ICompose (p <> toFilling c <> p') h' s
+    | otherwise = do r' <- plugHoleI r hls i c
+                     Just $ ICompose p h r'
+plugHoleI _ _ _ _ = Nothing       
 
 -- | Plug an unfilled hole in a template with some text. Returns @Nothing@ when
 -- the hole index doesn't exist in the template or is filled, otherwise returns
@@ -317,12 +333,12 @@ plugHoleI _ _ _ = Nothing
 -- value unlike `fillHole`.
 plugHole :: HoleFiller f
          => Template f
-         -> Natural  -- ^ Hole index to plug
+         -> Int  -- ^ Hole index to plug
          -> f        -- ^ Text to replace hole
          -> Maybe (Template f)
-plugHole (Template t@(ICompose _ _ _) (hls,m,fhls,n)) i c | i `elem` hls = 
-        do t' <- plugHoleI t i c
-           pure $ Template t' (i `delete` hls,m - 1,fhls,n)
+plugHole (Template t@(ICompose _ _ _) (hls,fhls)) i c | i `elem` hls = 
+        do t' <- plugHoleI t hls i c
+           pure $ Template t' (i `delete` hls,fhls)
 plugHole _ _ _ = Nothing
 
 -- | Plugs every hole in a template with no filled holes using the given plug
@@ -330,26 +346,28 @@ plugHole _ _ _ = Nothing
 -- template, then this function guarantees a template with no holes (a text).
 plugAllI 
     :: HoleFiller f 
-    => (Natural -> Maybe f)        -- ^ Plug function.
-    -> ITemplate f                 -- ^ ITemplate to plug.
-    -> Maybe (ITemplate f)
-plugAllI f (ICompose chk (EmptyHole h) r) = do
-    chk' <- f h
-    IChunk chk'' <- plugAllI f r
+    => [Int]
+    -> (Int -> Maybe f)      -- ^ Plug function.
+    -> ITemplate             -- ^ ITemplate to plug.
+    -> Maybe ITemplate
+plugAllI hls f (ICompose chk i r) | i `elem` hls = do
+    chk' <- f i
+    IChunk chk'' <- plugAllI hls f r
     return . IChunk $ chk <> toFilling chk' <> chk''
-plugAllI _ (ICompose _ (FilledHole _ _) _) = Nothing
-plugAllI _ t@(IChunk _) = return t
+plugAllI _ _ (ICompose _ _ _) = Nothing
+plugAllI _ _ t@(IChunk _) = return t
+
 
 -- | Plugs every hole in a template with no filled holes using the given plug
 -- function. If the plug function is defined for every hole in the input
 -- template, then this function guarantees a template with no holes (a text) is
 -- returned.
 plugAll :: HoleFiller f
-        => Template f                           -- ^ Template to plug
-        -> ([Natural] -> (Natural -> Maybe f))  -- ^ Plug function
+        => Template f                   -- ^ Template to plug
+        -> ([Int] -> (Int -> Maybe f))  -- ^ Plug function
         -> Maybe Text
-plugAll (Template t (hls,_,[],0)) f = 
-    case plugAllI (f hls) t of        
+plugAll (Template t (hls,fhls)) f | M.null fhls = 
+    case plugAllI hls (f hls) t of        
         Just (IChunk c) -> Just c
         _              -> Nothing
 plugAll _ _ = Nothing
@@ -485,8 +503,8 @@ type Tok    = Text
 -- | Type of the parsers that operate on a stream of `Tok`.
 type Parser = Parsec ITParseError Tok
 
--- | Parse a hole index (`Natural`).
-holeIndexParser :: Parser Natural
+-- | Parse a hole index (`Int`).
+holeIndexParser :: Parser Int
 holeIndexParser = do
     ds <- some digitChar
     pure . read $ ds
@@ -528,7 +546,7 @@ holeFillingParser :: Parser (Maybe FillingExp)
 holeFillingParser = between (char '{') (char '}') $ maybeParser fillingExpParser
 
 -- | Parse a `Hole`. That is, a pair of a hole index and a filling.
-holeParser :: Parser (Hole FillingExp)
+holeParser :: Parser (Int, Maybe FillingExp)
 holeParser = do
     skip (string "$")
     i <- holeIndexParser

@@ -26,36 +26,16 @@ import Data.StringTemplate.TemplateInternal
 genChunk :: Gen (Template ())
 genChunk = chunk <$> arbitrary
 
-genHole :: Gen (Hole ())
-genHole = do 
-    i <- arbitrary :: Gen Natural
-    pure $ EmptyHole i
-
-genSomeHole :: Gen (Hole ())
-genSomeHole = sized $ \_ -> 
-    frequency
-        [ (1, genHole)
-        ]
-
-type HoleProps = ([Natural],Natural,[Natural],Natural) 
-
-updateHoleProps :: Hole ()
-                -> HoleProps
-                -> HoleProps
-updateHoleProps (EmptyHole i)    (hls,nhls,fhls,nfhls) = (i:hls,nhls+1,fhls,nfhls)
-updateHoleProps (FilledHole i _) (hls,nhls,fhls,nfhls) = (hls,nhls,i:fhls,1+nfhls)
-
-genTemplateNat :: Gen (Hole ()) -> Natural -> Gen (Template ())
-genTemplateNat _       0 = genChunk
-genTemplateNat holeGen n = do (Template t hprops) <- genTemplateNat holeGen $ n - 1
-                              h <- holeGen
-                              c <- arbitrary :: Gen DT.Text
-                              let t' = ICompose c h t
-                              let hprops' = updateHoleProps h hprops
-                              pure $ Template t' hprops'
+genTemplateNat :: Natural -> Gen (Template ())
+genTemplateNat 0 = genChunk
+genTemplateNat n = do (Template t (hls,fhls)) <- genTemplateNat $ n - 1
+                      h <- arbitrary :: Gen Int
+                      c <- arbitrary :: Gen DT.Text
+                      let t' = ICompose c h t
+                      pure $ Template t' (h:hls,fhls)
 
 genTemplate :: Gen (Template ())
-genTemplate = arbitrary >>= genTemplateNat genSomeHole
+genTemplate = arbitrary >>= genTemplateNat 
 
 instance Arbitrary (Template ()) where
     arbitrary :: Gen (Template ())

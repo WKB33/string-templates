@@ -11,7 +11,6 @@ for generating templates at compile time.
 {-# OPTIONS_GHC -Wno-missing-export-lists #-}
 module Data.StringTemplate.QQInternal where
 
-import GHC.Natural                (Natural)
 import Language.Haskell.TH        (Q
                                   ,Exp
                                   ,Name)
@@ -42,20 +41,26 @@ stringTemplate2QExp =  flip (.) (parseTemplate . DT.pack) $ \case {
 
 -- | Convert a `Hole` into a Template Haskell expression.
 hole2QExp :: Hole FillingExp -> Q Exp
-hole2QExp (i,Nothing)             = appCombinator1 (TH.mkName "hole")   (mkNaturalLit i)
-hole2QExp (i,Just (VarFilling v)) = appCombinator2 (TH.mkName "filled") (mkNaturalLit i) $ TH.varE . TH.mkName $ v
-hole2QExp (i,Just (LitFilling f)) = appCombinator2 (TH.mkName "filled") (mkNaturalLit i) $ TH.stringE . DT.unpack $ f
+hole2QExp (EmptyHole  i   _) = appCombinator1 (TH.mkName "hole") (mkNaturalLit i)
+hole2QExp (FilledHole i f _) = 
+    appCombinator2 (TH.mkName "filled") (mkNaturalLit i) $
+        case f of
+            (VarFilling v) -> TH.varE . TH.mkName $ v
+            (LitFilling f) -> TH.stringE . DT.unpack $ f
+hole2QExp (UndefHole i _) = error $ "QQ error: hole index "
+                                 <> (show i)
+                                 <> " present in internal template, but not defined in the templates hole properties."
 
 -- | Convert an `ITemplate` into a Template Haskell expression.
-iTemplate2QExp :: ITemplate FillingExp -> Q Exp
-iTemplate2QExp (IChunk chk) = do
+iTemplate2QExp :: ITemplate -> HoleProps FillingExp -> Q Exp
+iTemplate2QExp (IChunk chk) _ = do
     let chunk = TH.mkName "chunk"
     appCombinator1 chunk $ mkTextLit chk  
-iTemplate2QExp (ICompose p h r) = do
+iTemplate2QExp (ICompose p h r) hlsProps = do
     -- ICompose p h r = (chunk p) +> (hole h) +> r
-    let pExp      = iTemplate2QExp (IChunk p)
-    let hExp      = hole2QExp h
-    let rExp      = iTemplate2QExp r
+    let pExp      = iTemplate2QExp (IChunk p) hlsProps
+    let hExp      = hole2QExp (h,hlsProps)
+    let rExp      = iTemplate2QExp r hlsProps
     let compose   = appInfixCombinator (TH.mkName "+>")
     (pExp `compose` hExp) `compose` rExp
 
@@ -71,7 +76,7 @@ appInfixCombinator constName e1 e2 = TH.infixE (Just e1) (TH.varE constName) (Ju
 -- Haskell expression. Use this to create new quasi-quoters for types that
 -- convert to template.
 template2QExp :: TemplateExp -> Q Exp
-template2QExp (Template it _) = iTemplate2QExp it
+template2QExp (Template it hls) = iTemplate2QExp it hls
 
 -- * Helpful Template Haskell combinators.
 
@@ -107,6 +112,7 @@ mkTextLit = TH.litE . TH.StringL . DT.unpack
 
 -- | Convert a `Natural` to a Template Haskell literal.
 mkNaturalLit :: TH.Quote m 
-            => Natural -- ^ Natural to convert
+            => Int -- ^ Natural to convert
             -> m Exp
-mkNaturalLit = TH.litE . TH.IntegerL . toInteger
+mkNaturalLit n | n >= 0 = TH.litE . TH.IntegerL . toInteger $ n
+               | otherwise = error "QQ error: hole indices must be natural numbers"
