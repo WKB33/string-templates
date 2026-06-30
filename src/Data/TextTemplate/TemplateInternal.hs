@@ -176,7 +176,7 @@ instance Eq f => Eq (Template f) where
       => Template f
       -> Template f
       -> Bool
-(Template t1 (_,fhMap1)) ==> (Template t2 (_,fhMap2)) = t1 >==> t2 && fhMap1 == fhMap2
+(Template t1 (hls1,fhls1)) ==> (Template t2 (hls2,fhls2)) = t1 >==> t2 && hls1 == hls2 && fhls1 == fhls2
 
 -- | An empty hole.
 hole :: Int -- ^ Hole index
