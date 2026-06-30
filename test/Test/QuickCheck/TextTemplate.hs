@@ -19,25 +19,35 @@ import Test.QuickCheck                      (Gen, Arbitrary (arbitrary), generat
 import Test.QuickCheck.Instances.Text       ()
 import Test.QuickCheck.Instances.Natural    ()
 import Data.Functor.Identity                (Identity)
-import Data.Text                            qualified as DT
 
 import Data.TextTemplate.TemplateInternal
+import Data.Text (Text)
+import qualified Data.IntMap as M
+import Data.Maybe (isJust, isNothing)
+import Data.IntMap (keys, IntMap)
 
-genChunk :: Gen (Template ())
+genChunk :: Gen (Template f)
 genChunk = chunk <$> arbitrary
 
-genTemplateNat :: Natural -> Gen (Template ())
-genTemplateNat 0 = genChunk
-genTemplateNat n = do (Template t (hls,fhls)) <- genTemplateNat $ n - 1
-                      h <- arbitrary :: Gen Int
-                      c <- arbitrary :: Gen DT.Text
-                      let t' = ICompose c h t
-                      let hls' = if h `elem` hls then hls else h:hls
-                      pure $ Template t' (hls',fhls)
+genHoleFilling :: Gen (Maybe Text)
+genHoleFilling = sized $ \n -> 
+    frequency
+        [ (1, pure Nothing),
+          (n, (arbitrary :: Gen Text) >>= (pure . Just))
+        ]
 
-genTemplate :: Gen (Template ())
+genTemplateNat :: Natural -> Gen (Template Text)
+genTemplateNat 0 = genChunk
+genTemplateNat n = do (Template t holeProps) <- genTemplateNat $ n - 1
+                      h <- arbitrary :: Gen Int
+                      f <- genHoleFilling
+                      c <- arbitrary :: Gen Text
+                      let t' = ICompose c h t                      
+                      pure $ Template t' $ holeProps `updateFreshHolePropsWith` (h,f)
+
+genTemplate :: Gen (Template Text)
 genTemplate = arbitrary >>= genTemplateNat 
 
-instance Arbitrary (Template ()) where
-    arbitrary :: Gen (Template ())
+instance Arbitrary (Template Text) where
+    arbitrary :: Gen (Template Text)
     arbitrary = genTemplate

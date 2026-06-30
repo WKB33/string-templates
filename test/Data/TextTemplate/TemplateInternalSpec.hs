@@ -13,20 +13,20 @@ module  Data.TextTemplate.TemplateInternalSpec (spec) where
 import Test.Hspec            (describe, Spec )
 import Test.QuickCheck       (Property, Testable (property), verboseCheck, Arbitrary)
 import Test.Hspec.QuickCheck (prop)
-import Data.Text             qualified as DT
+import Data.Text             (Text)
 
 import Data.TextTemplate.TemplateInternal
 import Test.QuickCheck.TextTemplate
 
-prop_associativeCompose :: Template () -> Template () -> Template () -> Property
+prop_associativeCompose :: Template Text -> Template Text -> Template Text -> Property
 prop_associativeCompose t1 t2 t3 = property $ t1 +> (t2 +> t3) == (t1 +> t2) +> t3
 
-prop_identityCompose :: Template () -> Property
+prop_identityCompose :: Template Text -> Property
 prop_identityCompose t = property $ unfilledHoles (empty +> t) == unfilledHoles t -- && (t +> empty) == t
 
 spec :: Spec 
 spec = do
-    describe "QuickCheck properties:" $ do
+    describe "QuickCheck properties:" $ do        
         describe "composition" $ do
             prop "associativity" $
                 prop_associativeCompose

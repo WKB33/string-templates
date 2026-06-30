@@ -81,6 +81,21 @@ decomposeUndefHole h | isNothing (decomposeEmptyHole h) && isNothing (decomposeF
 
 {-# COMPLETE EmptyHole, FilledHole, UndefHole #-}
 
+-- | Tests to see if a hole index exist in the given hole properties.
+isFreshHoleIndex :: Int         -- ^ Hole index
+                 -> HoleProps f -- ^ Hole properties
+                 -> Bool
+isFreshHoleIndex h (hls,fhls) = not $ h `elem` hls || h `elem` (M.keys fhls)
+
+-- | Adds a hole index and potential filling to the given hole properties. If
+-- the given filling is @Nothing@ then the hole is assumed to be added as an
+-- unfilled hole, otherwise it's added as a filled hole. The given index cannot
+-- already exist in the hole properties.
+updateFreshHolePropsWith :: HoleProps Text -> (Int,Maybe Text) -> HoleProps Text
+updateFreshHolePropsWith holeProps@(hls, fhls) (h, Nothing)  | h `isFreshHoleIndex` holeProps = (h:hls,fhls)
+updateFreshHolePropsWith holeProps@(hls, fhls) (h, (Just f)) | h `isFreshHoleIndex` holeProps = (hls,M.insert h f fhls)
+updateFreshHolePropsWith holeProps             (_,_)                                          = holeProps
+
 emptyHole :: Int -> HoleProps f -> Bool
 emptyHole i (hls,fhls) = i `elem` hls && not (i `elem` M.keys fhls)
 
@@ -246,12 +261,17 @@ unfilledHoles :: Template f -- ^ Template
               -> [Int]
 unfilledHoles (Template _ (hls,_)) = hls
 
-
 -- | Get the list of filled-hole indices present in a template.
 -- Time complexity: @O(n)@
 filledHoles :: Template f -- ^ Template 
             -> [Int]
 filledHoles (Template _ (_,fhls)) = M.keys fhls
+
+-- | Get the filling of a hole. Returns @Nothing@ when the hole doesn't exist.
+fillingInHole :: Template f -- ^ Template
+              -> Int        -- ^ Hole index
+              -> Maybe f
+fillingInHole (Template _ (_,fhls)) h = fhls !? h
 
 -- | Get the number of unfilled holes in a template.
 -- Time complexity: @O(n)@
