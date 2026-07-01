@@ -2,7 +2,7 @@
 Module      : JSON Templates
 Description : Text templates for JSON
 Copyright   : (c) Harley Eades, 2026
-              (c) WKB3, 2026
+              (c) WꓘB, 2026
 Maintainer  : harley.eades@gmail.com
 
 Text templates for JSON. The main use of this library is to test JSON
@@ -132,7 +132,7 @@ jsonTemplate2QExp = flip (.) (parseJSONTemplate . DT.pack) $ \case {
         ;Left err -> fail $ DT.unpack err
     } 
 
--- * JSON Templates Parser
+-- * JSON Templates JSONParser
 
 -- | Parse errors
 data JTParseError 
@@ -155,21 +155,21 @@ type Tok    = DT.Text
 type ParseError = ParseErrorBundle Tok JTParseError
 -- | Type of the parsers that operate on a stream of `Tok`. The state holds onto
 -- which fields have been parsed when parsing an object.
-type Parser a = ParsecT JTParseError Tok (State [DT.Text]) a
+type JSONParser a = ParsecT JTParseError Tok (State [DT.Text]) a
 
 -- | Parse a string using the input parser.
-parse :: Parser a -> DT.Text -> Either ParseError a
+parse :: JSONParser a -> DT.Text -> Either ParseError a
 parse p s = evalState (runParserT p "" s) []
 
 -- | Test a parser on some input. Useful for testing parsers in GHCi.
-parseTest :: Show a => Parser a -> DT.Text -> IO ()
+parseTest :: Show a => JSONParser a -> DT.Text -> IO ()
 parseTest p s = do
     either 
         (putStr . errorBundlePretty) 
         print 
     $ parse p s
 
-parseTestFile :: Show a => Parser a -> FilePath -> IO ()
+parseTestFile :: Show a => JSONParser a -> FilePath -> IO ()
 parseTestFile p file = do
     f <- readFile file
     parseTest p (DT.pack f)
@@ -183,7 +183,7 @@ parseJSONTemplate (DT.stripStart->s)
         Left bundle -> error $ errorBundlePretty bundle
         Right s -> Right s
 
-jsonParser :: Parser Value
+jsonParser :: JSONParser Value
 jsonParser = do
     space
     v <- valueParser
@@ -191,7 +191,7 @@ jsonParser = do
     pure v
 
 -- | Parse a JSON value
-valueParser :: Parser Value
+valueParser :: JSONParser Value
 valueParser =  do 
     v <-       (objVParser   <?> "object")
            <|> (strVParser   <?> "string")
@@ -203,7 +203,7 @@ valueParser =  do
     pure v
 
 -- | Parse an object.
-objectParser :: Parser [Field]
+objectParser :: JSONParser [Field]
 objectParser = do 
     -- Duplicate labels only affect the labels of the outer most object, and not
     -- nested objects. Thus, we reset the set of existing labels when we start
@@ -212,11 +212,11 @@ objectParser = do
     bracesParser fieldsParser
 
 -- | Parse a list of fields found in an object.
-fieldsParser :: Parser [Field]
+fieldsParser :: JSONParser [Field]
 fieldsParser = sepBy fieldParser commaTok
 
 -- | Parse a field of an object.
-fieldParser :: Parser Field
+fieldParser :: JSONParser Field
 fieldParser = do
     l <- fieldLabelParser
     existingLabels <- get
@@ -230,19 +230,19 @@ fieldParser = do
             pure $ (l,v)
 
 -- | Parse a field label found in a field of an object.
-fieldLabelParser :: Parser DT.Text
+fieldLabelParser :: JSONParser DT.Text
 fieldLabelParser = doubleQuotedParser charsParser
 
 -- | Parse an object value of a field of an object.
-objVParser :: Parser Value
+objVParser :: JSONParser Value
 objVParser = ObjV <$> objectParser
 
 -- | Parse a string value of a field of an object.
-strVParser :: Parser Value
+strVParser :: JSONParser Value
 strVParser = StrV <$> doubleQuotedParser charsParser
 
 -- | Parse a number value of a field of an object.
-numVParser :: Parser Value
+numVParser :: JSONParser Value
 numVParser = do
     -- Try to lookahead up until any decimal point, then we can check for
     -- leading zeros.
@@ -253,14 +253,14 @@ numVParser = do
         ('0' DT.:< d DT.:< _) | isDigit d -> customFailure JTPELeadingZeros
         _ -> pure $ NumV dt
     where
-        signedDecimal :: Parser Double
+        signedDecimal :: JSONParser Double
         signedDecimal = signed space decimal
 
-        signedFloat :: Parser Double
+        signedFloat :: JSONParser Double
         signedFloat = signed space float
 
 -- | Parse a boolean value of a field of an object.
-boolVParser :: Parser Value
+boolVParser :: JSONParser Value
 boolVParser = do
     dt <- trueTok <|> falseTok
     pure . BoolV $ case dt of
@@ -269,22 +269,22 @@ boolVParser = do
                     _ -> error "boolVParser: impossible branch"
 
 -- | Parse a null value of a field of an object.
-nullVParser :: Parser Value
+nullVParser :: JSONParser Value
 nullVParser =  nullTok
             *> pure NullV
 
 -- | Parse a `Value` or `Template`.
-valueTUParser :: Parser (TU Value)
+valueTUParser :: JSONParser (TU Value)
 valueTUParser = StrT.parseTU templateParser valueParser
 
 -- | Parse an array value of a field of an object.
-arrayVParser :: Parser Value
+arrayVParser :: JSONParser Value
 arrayVParser = do 
     ary <- bracketsParser $ flip sepBy commaTok valueTUParser
     pure $ ArrayV ary
 
--- * Parser combinators
-templateParser :: Parser TemplateExp
+-- * JSONParser combinators
+templateParser :: JSONParser TemplateExp
 templateParser = do
     s <- singleQuotedParser charsParser
     case StrT.parseTemplate s of
@@ -292,31 +292,31 @@ templateParser = do
         Right t -> pure $ t
 
 -- | Parse a single-quoted output of the input parser.
-singleQuotedParser :: Parser a -> Parser a
+singleQuotedParser :: JSONParser a -> JSONParser a
 singleQuotedParser = between (string "'") (tok "'")
 
 -- | Parse a double-quoted output of the input parser.
-doubleQuotedParser :: Parser a -> Parser a
+doubleQuotedParser :: JSONParser a -> JSONParser a
 doubleQuotedParser = between (string "\"") (tok "\"")
 
 -- | Parse a braced output of the input parser.
-bracesParser :: Parser a -> Parser a
+bracesParser :: JSONParser a -> JSONParser a
 bracesParser = between (tok "{") (tok "}")
 
 -- | Parse a bracketed output of the input parser.
-bracketsParser :: Parser a -> Parser a
+bracketsParser :: JSONParser a -> JSONParser a
 bracketsParser = between (tok "[") (tok "]")
 
 -- | Parse an escape character. 
 -- These are one of
 -- @['\\','/','"','\'','b','n','f','r','t']@
-escapeParser :: Parser Char
+escapeParser :: JSONParser Char
 escapeParser = do
     skip backslashTok
     escapeCharParser
         <|> unicodeEscapeParser
 
-escapeCharParser :: Parser Char
+escapeCharParser :: JSONParser Char
 escapeCharParser = do
     e <- satisfy isEscapeChar
     case escapeToChar e of
@@ -341,7 +341,7 @@ escapeToChar _    = Nothing
 
 -- | Parse a unicode hex string of the form @uXXXX@ into the hex string
 -- @0xXXXX@.
-hexCodeParser :: Parser String
+hexCodeParser :: JSONParser String
 hexCodeParser = do
     skip "u"
     d1 <- satisfy isHexDigit
@@ -352,7 +352,7 @@ hexCodeParser = do
 
 -- |  Parse a unicode escape character of the form @\uXXXX@. This does handle
 -- surrogate pairs. 
-unicodeEscapeParser :: Parser Char
+unicodeEscapeParser :: JSONParser Char
 unicodeEscapeParser = do
     code1 <- hexCodeParser
     let i  = read code1 :: Int
@@ -372,47 +372,47 @@ unicodeEscapeParser = do
               pure . chr $ i
 
 -- | Parse a single unicode character including escapes.
-charParser :: Parser Char
+charParser :: JSONParser Char
 charParser = choice [
         satisfy (\c -> not (c `elem` ['\\','"','\'']) && isPrint c),
         escapeParser
     ]
 
 -- | Parse as many unicode characters as possible including escaped characters.
-charsParser :: Parser DT.Text
+charsParser :: JSONParser DT.Text
 charsParser = DT.pack <$> many charParser 
 
 -- * Tokens
 
 -- | Parse a token (unicode character)
 -- Consumes whitespace *after* the parsed token.
-tok :: Tok -> Parser Tok
+tok :: Tok -> JSONParser Tok
 tok = symbol space
 
 -- | Parse and throw away the symbol parsed by the input token
-skip :: Parser Tok -> Parser ()
+skip :: JSONParser Tok -> JSONParser ()
 skip = skipCount 1
 
 -- | Parse the comma token. Consumes whitespace after the parsed token.
-commaTok :: Parser Tok
+commaTok :: JSONParser Tok
 commaTok = tok ","
 
 -- | Parse the "true" token. Consumes whitespace after the parsed token.
-trueTok :: Parser Tok
+trueTok :: JSONParser Tok
 trueTok = tok "true"
 
 -- | Parse the "false" token. Consumes whitespace after the parsed token.
-falseTok :: Parser Tok
+falseTok :: JSONParser Tok
 falseTok = tok "false"
 
 -- | Parse the "null" token. Consumes whitespace after the parsed token.
-nullTok :: Parser Tok
+nullTok :: JSONParser Tok
 nullTok = tok "null"
 
 -- | Parse the colon token. Consumes whitespace after the parsed token.
-colonTok :: Parser Tok
+colonTok :: JSONParser Tok
 colonTok = tok ":"
 
 -- | Parse the backslash token.
-backslashTok :: Parser Tok
+backslashTok :: JSONParser Tok
 backslashTok = string "\\"

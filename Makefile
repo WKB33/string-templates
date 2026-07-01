@@ -6,3 +6,6 @@ t test:
 
 bt build-test:
 	stack test --no-run-tests
+
+cl clean:
+	stack clean --full

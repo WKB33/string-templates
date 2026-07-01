@@ -70,9 +70,10 @@ test-suite text-templates-test
   other-modules:
       Paths_text_templates
       Data.TextTemplate.TemplateInternalSpec
-      Data.TextTemplate.QQInternalSpec
-      Test.QuickCheck.TextTemplate
+      Data.TextTemplate.QQInternalSpec      
       Data.TextTemplate.JSONInternalSpec
+      Test.QuickCheck.TextTemplate
+      Test.Helpers
   autogen-modules:
       Paths_text_templates
   hs-source-dirs:
@@ -89,6 +90,7 @@ test-suite text-templates-test
      base >=4.7 && <5
     ,text-templates
     ,text
+    ,extra
     ,megaparsec
     ,type-natural
     ,template-haskell    
