@@ -28,7 +28,6 @@ import Data.TextTemplate.TemplateInternal (Template
                                           ,(+>)
                                           ,chunk
                                           ,hole
-                                          ,TU (LitTU, StrTU)
                                           ,filled)
 
 spec :: Spec
@@ -257,12 +256,12 @@ test_array6 :: UnitTest (Maybe Value)
 test_array6 = UnitTest {
          test_output = testJSONParser arrayVParser $ "[42, \"foo\", '$1{}', null, {\"f\":\"v\"}, [1,2,3]]"
         ,test_result = Just . ArrayV $ [
-             LitTU (NumV 42)
-            ,LitTU (StrV "foo")
-            ,StrTU (hole 1)
-            ,LitTU NullV
-            ,LitTU (ObjV [("f",LitTU (StrV "v"))])
-            ,LitTU (ArrayV [LitTU (NumV 1),LitTU (NumV 2),LitTU (NumV 3)])
+             Right (NumV 42)
+            ,Right (StrV "foo")
+            ,Left (hole 1)
+            ,Right NullV
+            ,Right (ObjV [("f",Right (StrV "v"))])
+            ,Right (ArrayV [Right (NumV 1),Right (NumV 2),Right (NumV 3)])
          ]
     }
 
@@ -275,7 +274,7 @@ test_array7 = UnitTest {
 test_array8 :: UnitTest (Maybe Value)
 test_array8 = UnitTest {
          test_output = testJSONParser arrayVParser $ "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]"
-        ,test_result = Just . ArrayV $ [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [LitTU (ArrayV [])])])])])])])])])])])])])])])])])])])])])])])])])])])])])])])])])])])]
+        ,test_result = Just . ArrayV $ [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [Right (ArrayV [])])])])])])])])])])])])])])])])])])])])])])])])])])])])])])])])])])])]
     }
 
 test_array9 :: UnitTest (Maybe Value)
@@ -293,7 +292,7 @@ test_array10 = UnitTest {
 test_array11 :: UnitTest (Maybe Value)
 test_array11 = UnitTest {
          test_output = testJSONParser arrayVParser $ "[\"\\u0000\", \"\\uD83D\\uDE00\"]"
-        ,test_result = Just . ArrayV $ [LitTU (StrV "\NUL"),LitTU (StrV "😀")]
+        ,test_result = Just . ArrayV $ [Right (StrV "\NUL"),Right (StrV "😀")]
     }
 
 test_array12 :: UnitTest (Maybe Value)
@@ -393,13 +392,13 @@ test_object3 = UnitTest {
 test_object4 :: UnitTest (Maybe Value)
 test_object4 = UnitTest {
          test_output = testJSONParser objVParser $ "{\"field1\": 1}"
-        ,test_result = Just . ObjV $ [("field1",LitTU (NumV 1))]
+        ,test_result = Just . ObjV $ [("field1",Right (NumV 1))]
     }
 
 test_object5 :: UnitTest (Maybe Value)
 test_object5 = UnitTest {
          test_output = testJSONParser objVParser $ "{\"\": 1}"
-        ,test_result = Just . ObjV $ [("",LitTU (NumV 1))]
+        ,test_result = Just . ObjV $ [("",Right (NumV 1))]
     }
 
 test_object6 :: UnitTest (Maybe Value)
@@ -417,13 +416,13 @@ test_object7 = UnitTest {
 test_object8 :: UnitTest (Maybe Value)
 test_object8 = UnitTest {
          test_output = testJSONParser objVParser $ "{\"\\u006E\\u0061\\u006D\\u0065\": \"\\u004A\\u0053\\u004F\\u004E\"}"
-        ,test_result = Just . ObjV $ [("name",LitTU (StrV "JSON"))]
+        ,test_result = Just . ObjV $ [("name",Right (StrV "JSON"))]
     }
 
 test_object9 :: UnitTest (Maybe Value)
 test_object9 = UnitTest {
          test_output = testJSONParser objVParser $ "{\"J\\u0053ON\": \"J\\u0053\\u004F\\u004E \\uD83D\\uDE00 is \\u0067reat\\u0021\"}"
-        ,test_result = Just (ObjV [("JSON",LitTU (StrV "JSON \128512 is great!"))])
+        ,test_result = Just (ObjV [("JSON",Right (StrV "JSON \128512 is great!"))])
     }
 
 test_object10 :: UnitTest (Maybe Value)

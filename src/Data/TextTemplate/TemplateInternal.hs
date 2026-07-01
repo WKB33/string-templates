@@ -50,7 +50,6 @@ import Data.Maybe (isNothing)
 import Prelude                 hiding (null)
 import Data.List               (union
                                ,delete)
-import Control.Applicative     (Alternative)
 import Data.String (IsString (..))
 import qualified Data.IntMap as M
 import Data.IntMap (IntMap, (!?))
@@ -393,33 +392,54 @@ plugAll (Template t (hls,fhls)) f | M.null fhls =
 plugAll _ _ = Nothing
 
 -- * Template Expressions
+class Eq hfExp => HoleFillingExp hfExp where
+    varHFExp        :: hfExp -> Maybe String
+    hfExpToText     :: hfExp -> Text
+    parseHFExp      :: Parsec TParseError Text hfExp
+
+class HoleFillingExp hfExp => ToTemplate hfExp a where
+    toTemplate :: a -> Template hfExp
+
+instance (ToTemplate hfExp a) => ToTemplate hfExp (Either (Template hfExp) a) where
+    toTemplate :: Either (Template hfExp) a -> Template hfExp
+    toTemplate (Left t)  = t
+    toTemplate (Right a) = toTemplate a
+
+instance HoleFillingExp () where
+    varHFExp :: () -> Maybe String
+    varHFExp () = Nothing
+
+    hfExpToText :: () -> Text
+    hfExpToText () = ""
+
+    parseHFExp :: Parsec TParseError Text ()
+    parseHFExp = pure ()
 
 -- | A intermediate expression language for text templates where expressions
 -- (`FillingExp`) fill their holes.
 type TemplateExp = Template FillingExp
 
--- | Template Union of types. Use this to add templates to various
--- locations within some structure data.
-data TU a = StrTU (Template FillingExp) | LitTU a
-    deriving Eq
-
-class ToTemplateExp a where
-    toTemplateExp :: a -> TemplateExp
-
-instance ToTemplateExp TemplateExp where
-    toTemplateExp :: TemplateExp -> TemplateExp
-    toTemplateExp = id
-
-instance ToTemplateExp a => ToTemplateExp (TU a) where
-    toTemplateExp :: TU a -> TemplateExp
-    toTemplateExp (StrTU t) = t
-    toTemplateExp (LitTU l) = toTemplateExp l
+instance ToTemplate FillingExp TemplateExp where
+    toTemplate :: TemplateExp -> Template FillingExp
+    toTemplate = id
 
 -- | Hole fillings consist of meta-variables or literals which is anything that
 -- can be converted into a `Data.Text.Text`.
 data FillingExp 
     = VarFilling String  -- ^ Meta-variable
     | LitFilling Text    -- ^ Literal filling
+
+instance HoleFillingExp FillingExp where
+    varHFExp :: FillingExp -> Maybe String
+    varHFExp (VarFilling v) = Just v
+    varHFExp _              = Nothing
+    
+    hfExpToText :: FillingExp -> Text
+    hfExpToText (VarFilling v) = DT.pack v
+    hfExpToText (LitFilling t) = t
+
+    parseHFExp :: Parsec TParseError Text FillingExp
+    parseHFExp = fillingExpParser
 
 instance Show FillingExp where
     show :: FillingExp -> String
@@ -445,50 +465,6 @@ showASTFilling :: FillingExp -> Text
 showASTFilling (LitFilling s) = "LitFilling "<>DT.show s
 showASTFilling (VarFilling v) = "VarFilling "<>DT.show v
 
--- | Translates a list into a template list where each template in the input
--- list is separated by the input template.
-sepTemplatesBy :: ToTemplateExp a
-               => TemplateExp   -- ^ Separator
-               -> [a] -- ^ List of templates
-               -> TemplateExp
-sepTemplatesBy _ []  = chunk ""
-sepTemplatesBy _ [v] = toTemplateExp v
-sepTemplatesBy sep (v:vs) = toTemplateExp v +> sep +> sepTemplatesBy sep vs 
-
--- | Add a prefix and suffix templates to the given value.
-betweenTemplate :: ToTemplateExp a 
-                => TemplateExp     -- ^ Prefix template
-                -> TemplateExp     -- ^ Suffice template
-                -> a              -- ^ Value to be converted into a template
-                -> TemplateExp
-betweenTemplate b a (toTemplateExp->t) = b +> t +> a
-
--- | Add brackets `[]` around the input template.
-bracketTemplate :: TemplateExp -> TemplateExp
-bracketTemplate = betweenTemplate (chunk "[") (chunk "]")
-
--- | Add braces `{}` around the input template.
-braceTemplate :: TemplateExp -> TemplateExp
-braceTemplate = betweenTemplate (chunk "{") (chunk "}")
-
--- | Parse a template union given a parser for templates and a parser for the
--- type being combined with templates.
-parseTU :: Alternative m => m TemplateExp -> m a -> m (TU a)
-parseTU tempParser p =  StrTU <$> tempParser
-                    <|> LitTU <$> p
-
-instance (Show a) => Show (TU a) where
-    show :: TU a -> String
-    show (StrTU t) = show t
-    show (LitTU l) = show l
-
--- | Parse a template.
-parseTemplate :: Text -> Either Text TemplateExp
-parseTemplate s 
-    = case parse templateParser "text-templates" s of
-        Left bundle -> Left . DT.pack $ errorBundlePretty bundle
-        Right t -> Right t
-
 parseVarFilling :: Text -> Either Text String
 parseVarFilling s 
     = case parse varFillingParser "text-templates" s of
@@ -501,27 +477,97 @@ parseLitFilling s
     = case parse litFillingParser "text-templates" s of
         Left bundle -> Left . DT.pack $ errorBundlePretty bundle
         Right (LitFilling t) -> Right t
-        _ -> error "TextTemplates.Parser: impossible branch reached in parseVarFilling."
+        _ -> error "TextTemplates.Parser: impossible branch reached in parseLitFilling."
+
+parseFillingExp :: Text -> Either Text FillingExp
+parseFillingExp s 
+    = case parse fillingExpParser "text-templates" s of
+        Left bundle -> Left . DT.pack $ errorBundlePretty bundle
+        Right t -> Right t
+
+
+charFillingParser :: Parsec TParseError Tok DT.Char
+charFillingParser = choice [
+        satisfy (\c -> c /= '"' && c /= '\\'),
+        escapeCharFillingParser
+    ]
+
+escapeCharFillingParser :: Parsec TParseError Tok Char
+escapeCharFillingParser = do
+    skip (string "\\")
+    satisfy (`elem` ['"','\\'])
+
+stringFillingParser :: Parsec TParseError Tok Text
+stringFillingParser = DT.pack <$> many charFillingParser
+
+varFillingParser :: Parsec TParseError Tok FillingExp
+varFillingParser = VarFilling <$> do
+    -- Make sure we start with a lower-case ascii letter.
+    c <- maybeParser . lookAhead $ takeWhile1P Nothing isAsciiLower
+    if isNothing c
+    then customFailure $ HFExpParseError "filling variables must being with a lower-case letter"
+    else DT.unpack <$> takeWhile1P Nothing (\c -> isAlphaNum c && isAscii c)
+
+litFillingParser :: Parsec TParseError Tok FillingExp
+litFillingParser = LitFilling <$> doubleQuotedParser stringFillingParser
+
+fillingExpParser :: Parsec TParseError Tok FillingExp
+fillingExpParser =  litFillingParser
+                <|> varFillingParser
+
+-- | Translates a list into a template list where each template in the input
+-- list is separated by the input template.
+sepTemplatesBy :: (ToTemplate hfExp a)
+               => Template hfExp   -- ^ Separator
+               -> [a] -- ^ List of templates
+               -> Template hfExp
+sepTemplatesBy _ []  = chunk ""
+sepTemplatesBy _ [v] = toTemplate v
+sepTemplatesBy sep (v:vs) = toTemplate v +> sep +> sepTemplatesBy sep vs 
+
+-- | Add a prefix and suffix templates to the given value.
+betweenTemplate :: (ToTemplate hfExp a) 
+                => Template hfExp     -- ^ Prefix template
+                -> Template hfExp     -- ^ Suffice template
+                -> a              -- ^ Value to be converted into a template
+                -> Template hfExp
+betweenTemplate b a (toTemplate->t) = b +> t +> a
+
+-- | Add brackets `[]` around the input template.
+bracketTemplate :: TemplateExp -> TemplateExp
+bracketTemplate = betweenTemplate (chunk "[") (chunk "]")
+
+-- | Add braces `{}` around the input template.
+braceTemplate :: TemplateExp -> TemplateExp
+braceTemplate = betweenTemplate (chunk "{") (chunk "}")
+
+-- | Parse a template.
+parseTemplate :: HoleFillingExp hfExp => Text -> Either Text (Template hfExp)
+parseTemplate s = 
+    case parse templateParser "text-templates" s of
+         Left bundle -> Left . DT.pack $ errorBundlePretty bundle
+         Right t -> Right t
 
 -- | Convenient function for testing the parser in GHCi.
 templateParserTest :: Text -> IO ()
-templateParserTest = parseTest templateParser
+templateParserTest = parseTest $ templateParser @FillingExp
 
 -- | Parse errors
-data ITParseError
-    = ITPEVarFillingExpBeginLower
+
+data TParseError
+    = HFExpParseError Text
     deriving (Eq,Ord,Show)
 
-instance ShowErrorComponent ITParseError where
-    showErrorComponent :: ITParseError -> String
-    showErrorComponent err = "text-templates: " <> showErrorComponent' err
+instance ShowErrorComponent TParseError where
+    showErrorComponent :: TParseError -> String
+    showErrorComponent err = "text-templates-parser: " <> showErrorComponent' err
         where
-            showErrorComponent' ITPEVarFillingExpBeginLower = "filling variables must being with a lower-case letter"
+            showErrorComponent' (HFExpParseError err) = DT.unpack err
 
 -- | Type of tokens.
 type Tok    = Text
 -- | Type of the parsers that operate on a stream of `Tok`.
-type Parser = Parsec ITParseError Tok
+type Parser = Parsec TParseError Tok 
 
 -- | Parse a hole index (`Int`).
 holeIndexParser :: Parser Int
@@ -529,44 +575,15 @@ holeIndexParser = do
     ds <- some digitChar
     pure . read $ ds
 
-charFillingParser :: Parser DT.Char
-charFillingParser = choice [
-        satisfy (\c -> c /= '"' && c /= '\\'),
-        escapeCharFillingParser
-    ]
-
-escapeCharFillingParser :: Parser Char
-escapeCharFillingParser = do
-    skip (string "\\")
-    satisfy (`elem` ['"','\\'])
-
-stringFillingParser :: Parser Text
-stringFillingParser = DT.pack <$> many charFillingParser
-
-varFillingParser :: Parser FillingExp
-varFillingParser = VarFilling <$> do
-    -- Make sure we start with a lower-case ascii letter.
-    c <- maybeParser . lookAhead $ takeWhile1P Nothing isAsciiLower
-    if isNothing c
-    then customFailure ITPEVarFillingExpBeginLower
-    else DT.unpack <$> takeWhile1P Nothing (\c -> isAlphaNum c && isAscii c)
-
-litFillingParser :: Parser FillingExp
-litFillingParser = LitFilling <$> doubleQuotedParser stringFillingParser
-
-fillingExpParser :: Parser FillingExp
-fillingExpParser =  litFillingParser
-                <|> varFillingParser
-
 maybeParser :: MonadParsec e s f => f a -> f (Maybe a)
 maybeParser p = try (Just <$> p) <|> pure Nothing
 
 -- | Parse a hole's filling which must be escaped properly.
-holeFillingParser :: Parser (Maybe FillingExp)
-holeFillingParser = between (char '{') (char '}') $ maybeParser fillingExpParser
+holeFillingParser :: HoleFillingExp hfExp => Parser (Maybe hfExp)
+holeFillingParser = between (char '{') (char '}') $ maybeParser parseHFExp
 
 -- | Parse a `Hole`. That is, a pair of a hole index and a filling.
-holeParser :: Parser (Int, Maybe FillingExp)
+holeParser :: HoleFillingExp hfExp => Parser (Int, Maybe hfExp)
 holeParser = do
     skip (string "$")
     i <- holeIndexParser
@@ -578,7 +595,7 @@ chunkParser :: Parser Text
 chunkParser = DT.pack <$> many (templateCharParser False)
 
 -- | Parse a template either as a `Chunk` or a `Compose`.
-templateParser :: Parser TemplateExp
+templateParser :: HoleFillingExp hfExp => Parser (Template hfExp)
 templateParser = do
     mc <- chunkParser
     isEnd <- atEnd
@@ -606,16 +623,16 @@ escapedTemplateCharParser = do
 -- * Helper parsers
 
 -- | Parse a double-quoted output of the input parser.
-doubleQuotedParser :: Parser a -> Parser a
+doubleQuotedParser :: Ord e => Parsec e Tok a -> Parsec e Tok a
 doubleQuotedParser = between (string "\"") (tok "\"")
 
 -- * Tokens
 
 -- | Parse a token (unicode character)
 -- Consumes whitespace *after* the parsed token.
-tok :: Tok -> Parser Tok
+tok :: Ord e => Tok -> Parsec e Tok Tok
 tok = symbol space
 
 -- | Parse and throw away the symbol parsed by the input token
-skip :: Parser Tok -> Parser ()
+skip :: Parsec e Tok Tok -> Parsec e Tok ()
 skip = skipCount 1

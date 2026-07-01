@@ -57,9 +57,6 @@ module Data.TextTemplate (-- * Templates
                            ,prettyList
                            ,prettyDouble
                            ,doubleQuote
-                           -- * Combining Templates with Other Types
-                           ,TU(..)
-                           ,parseTU
                            ) where
 
 import Data.TextTemplate.Text

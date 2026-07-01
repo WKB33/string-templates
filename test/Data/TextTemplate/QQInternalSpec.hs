@@ -8,6 +8,32 @@ import Data.TextTemplate.QQInternal
 import Data.IntMap qualified as M
 import Data.Text (Text)
 
+spec :: Spec 
+spec = do
+    describe "quasi-quoting tests:" $ do
+        it "chunk test 1" $ do
+            (fst testChunk1) `shouldBe` (snd testChunk1)
+        it "chunk test 2" $ do
+            (fst testChunk2) `shouldBe` (snd testChunk2)
+        it "chunk test 3" $ do
+            (fst testChunk3) `shouldBe` (snd testChunk3)
+        it "hole test 1" $ do
+            (fst testHole1) `shouldBe` (snd testHole1)
+        it "hole test 2" $ do
+            (fst testHole2) `shouldBe` (snd testHole2)
+        it "hole test 3" $ do
+            (fst testHole3) `shouldBe` (snd testHole3)
+        it "hole test 4" $ do
+            (fst testHole4) `shouldBe` (snd testHole4)
+        it "hole test 5" $ do
+            (fst testHole5) `shouldBe` (snd testHole5)          
+        it "filled hole test 1" $ 
+            (fst testFilledHole1) `shouldBe` (snd testFilledHole1)
+        it "filled hole test 2" $ 
+            (fst (testFilledHole2 3)) `shouldBe` (snd (testFilledHole2 3))
+        it "filled hole test 3" $ 
+            (fst testFilledHole3) `shouldBe` (snd testFilledHole3)
+
 testChunk1 :: (Template (),Template ())
 testChunk1 = ([template|this is a chunk|],chunk "this is a chunk")
 
@@ -41,28 +67,3 @@ testFilledHole2 x = ([template|before-$1{x}-and-after|], Template (ICompose "bef
 testFilledHole3 :: (Template String,Template String)
 testFilledHole3 = ([template|before-$1{"\\ $ ( ) { \" '' }"}-and-after|], Template (ICompose "before-" 1 (IChunk "-and-after")) ([],M.fromList [(1,"\\ $ ( ) { \" '' }")]))
 
-spec :: Spec 
-spec = do
-    describe "general tests:" $ do
-        it "chunk test 1" $ do
-            (fst testChunk1) `shouldBe` (snd testChunk1)
-        it "chunk test 2" $ do
-            (fst testChunk2) `shouldBe` (snd testChunk2)
-        it "chunk test 3" $ do
-            (fst testChunk3) `shouldBe` (snd testChunk3)
-        it "hole test 1" $ do
-            (fst testHole1) `shouldBe` (snd testHole1)
-        it "hole test 2" $ do
-            (fst testHole2) `shouldBe` (snd testHole2)
-        it "hole test 3" $ do
-            (fst testHole3) `shouldBe` (snd testHole3)
-        it "hole test 4" $ do
-            (fst testHole4) `shouldBe` (snd testHole4)
-        it "hole test 5" $ do
-            (fst testHole5) `shouldBe` (snd testHole5)          
-        it "filled hole test 1" $ 
-            (fst testFilledHole1) `shouldBe` (snd testFilledHole1)
-        it "filled hole test 2" $ 
-            (fst (testFilledHole2 3)) `shouldBe` (snd (testFilledHole2 3))
-        it "filled hole test 3" $ 
-            (fst testFilledHole3) `shouldBe` (snd testFilledHole3)
